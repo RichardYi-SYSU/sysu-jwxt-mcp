@@ -57,3 +57,37 @@ class TimetableResponse(BaseModel):
     stale: bool = False
     source: Literal["live", "cache"]
     entries: list[TimetableEntry]
+
+
+class ExamWeek(BaseModel):
+    exam_week_id: str
+    exam_week_name: str
+    start_date: str | None = None
+    end_date: str | None = None
+    apply_range: str | None = None
+
+
+class ExamEntry(BaseModel):
+    term: str
+    exam_week_id: str | None = None
+    exam_week_name: str | None = None
+    course_name: str | None = None
+    exam_date: str | None = None
+    exam_time: str | None = None
+    duration_minutes: int | None = None
+    location: str | None = None
+    exam_stage: str | None = None
+    exam_mode: str | None = None
+    weekday: int | None = Field(default=None, ge=1, le=7)
+    section_label: str | None = None
+    raw_source: dict = Field(default_factory=dict)
+
+
+class ExamsResponse(BaseModel):
+    term: str
+    stale: bool = False
+    source: Literal["live", "cache"]
+    selected_exam_week: ExamWeek | None = None
+    exam_weeks: list[ExamWeek] = Field(default_factory=list)
+    entries: list[ExamEntry] = Field(default_factory=list)
+    raw_records: list[dict] = Field(default_factory=list)

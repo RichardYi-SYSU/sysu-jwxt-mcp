@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from sysu_jwxt_agent.main import create_app
-from sysu_jwxt_agent.schemas import TimetableResponse
+from sysu_jwxt_agent.schemas import ExamsResponse, TimetableResponse
 
 
 def test_health() -> None:
@@ -112,3 +112,38 @@ def test_timetable_returns_live_payload_when_authenticated() -> None:
     assert response.status_code == 200
     assert response.json()["term"] == "2025-2"
     assert response.json()["entries"][0]["course_name"] == "操作系统原理"
+
+
+def test_exams_returns_live_payload_when_authenticated() -> None:
+    client = TestClient(create_app())
+    exams = ExamsResponse(
+        term="2025-2",
+        stale=False,
+        source="live",
+        selected_exam_week={
+            "exam_week_id": "1993161184323653634",
+            "exam_week_name": "18-19周期末考",
+            "start_date": "2026-06-29",
+            "end_date": "2026-07-12",
+        },
+        exam_weeks=[
+            {
+                "exam_week_id": "1993161184323653634",
+                "exam_week_name": "18-19周期末考",
+                "start_date": "2026-06-29",
+                "end_date": "2026-07-12",
+            }
+        ],
+        entries=[],
+        raw_records=[],
+    )
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch("sysu_jwxt_agent.services.jwxt.JwxtClient._fetch_live_exams", return_value=exams),
+    ):
+        response = client.get("/exams")
+
+    assert response.status_code == 200
+    assert response.json()["term"] == "2025-2"
+    assert response.json()["selected_exam_week"]["exam_week_name"] == "18-19周期末考"

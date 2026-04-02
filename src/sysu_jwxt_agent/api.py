@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from sysu_jwxt_agent.schemas import (
+    ExamsResponse,
     HealthResponse,
     ImportStateRequest,
     ImportStateResponse,
@@ -9,6 +10,7 @@ from sysu_jwxt_agent.schemas import (
 )
 from sysu_jwxt_agent.services.jwxt import (
     AuthenticationRequiredError,
+    InvalidQueryError,
     JwxtClient,
     UpstreamNotImplementedError,
 )
@@ -48,6 +50,39 @@ def build_router(jwxt_client: JwxtClient, auth_service) -> APIRouter:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
                     "code": "unauthenticated",
+                    "message": str(exc),
+                },
+            ) from exc
+        except UpstreamNotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail={
+                    "code": "upstream_not_implemented",
+                    "message": str(exc),
+                },
+            ) from exc
+
+    @router.get("/exams", response_model=ExamsResponse)
+    def get_exams(
+        term: str = Query(default="current"),
+        exam_week_id: str | None = Query(default=None),
+        client: JwxtClient = Depends(get_client),
+    ) -> ExamsResponse:
+        try:
+            return client.get_exams(term=term, exam_week_id=exam_week_id)
+        except AuthenticationRequiredError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "unauthenticated",
+                    "message": str(exc),
+                },
+            ) from exc
+        except InvalidQueryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "invalid_query",
                     "message": str(exc),
                 },
             ) from exc
