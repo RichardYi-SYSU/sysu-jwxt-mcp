@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a local service that allows an agent to read timetable data from the SYSU teaching affairs system for the currently authorized user.
+Build a local service that allows an agent to read key teaching-affairs data from the SYSU teaching affairs system for the currently authorized user.
 
 ## Constraints
 
@@ -14,17 +14,20 @@ Build a local service that allows an agent to read timetable data from the SYSU 
 ## Milestones
 
 1. Baseline service
-   - FastAPI app with health, login, refresh, and timetable endpoints.
+   - FastAPI app with health, login, refresh, import-state, and keepalive endpoints.
    - Typed config, session storage, cache storage, and normalized response models.
 2. Browser-backed auth
    - Playwright browser launcher.
    - Session persistence via storage state.
-   - Session validation and explicit login status reporting.
-3. Timetable extraction
-   - Discover authenticated request path or page data source.
+   - Session validation, keepalive worker, and explicit login status reporting.
+3. Data extraction
+   - Discover authenticated request paths for timetable, exams, grades, empty classrooms, and CET scores.
+   - Implement response normalization and strict query validation.
+   - Keep high-cardinality endpoints constrained by required filters.
+4. Timetable hardening
    - Implement timetable normalization and stale-cache fallback.
    - Surface parse and upstream contract failures as explicit errors.
-4. Hardening
+5. Hardening
    - Add structured logs with sensitive-field redaction.
    - Add smoke tests for health and parser behavior.
    - Add integration notes for turning REST endpoints into MCP tools later.
@@ -33,12 +36,17 @@ Build a local service that allows an agent to read timetable data from the SYSU 
 
 - A runnable local repository.
 - Project docs for agent usage and implementation boundaries.
-- Working service skeleton with clear extension points for live login and timetable fetch.
-- Basic tests around API health and serialization behavior.
+- Working service with agent-facing endpoints for:
+  - timetable (`/timetable`)
+  - exams (`/exams`)
+  - grades (`/grades`)
+  - empty classrooms (`/classrooms/empty`)
+  - CET scores (`/cet-scores`)
+- Basic tests around API health, parameter validation, and serialization behavior.
 
 ## Deferred
 
-- Grades, exams, training plan, and course selection data.
+- Training plan, course selection, notices, and additional student-service pages.
 - Multi-user session isolation.
 - Direct MCP server exposure.
 - Scheduled background sync.
