@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+playwright-report/
+test-results/
+.env
+data/
+dist/
+build/
+*.pyc
+*.egg-info/
+jwxt-session.json
+jwxt-storage-state.json

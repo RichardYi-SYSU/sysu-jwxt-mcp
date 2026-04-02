@@ -1,0 +1,114 @@
+from fastapi.testclient import TestClient
+from unittest.mock import patch
+
+from sysu_jwxt_agent.main import create_app
+from sysu_jwxt_agent.schemas import TimetableResponse
+
+
+def test_health() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_timetable_requires_auth() -> None:
+    client = TestClient(create_app())
+
+    with patch(
+        "sysu_jwxt_agent.services.auth.AuthService.is_authenticated",
+        return_value=False,
+    ):
+        response = client.get("/timetable")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "unauthenticated"
+
+
+def test_login_reports_live_probe_when_unauthenticated() -> None:
+    client = TestClient(create_app())
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService._probe_upstream_status", return_value={"code": 200, "data": 0}),
+        patch(
+            "sysu_jwxt_agent.services.auth.AuthService._fetch_cas_login_url",
+            return_value="https://cas.sysu.edu.cn/esc-sso/login?service=example",
+        ),
+    ):
+        response = client.post("/auth/login")
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is False
+    assert response.json()["login_required"] is True
+    assert response.json()["cas_login_url"] == "https://cas.sysu.edu.cn/esc-sso/login?service=example"
+    assert response.json()["upstream_code"] == 200
+
+
+def test_import_state_writes_storage_state(tmp_path) -> None:
+    from sysu_jwxt_agent.services.auth import AuthService
+    from sysu_jwxt_agent.services.browser import BrowserLaunchSpec, BrowserSessionManager
+    from sysu_jwxt_agent.schemas import ImportStateRequest
+
+    auth = AuthService(
+        tmp_path,
+        browser_manager=BrowserSessionManager(
+            BrowserLaunchSpec(
+                headless=True,
+                channel=None,
+                storage_state_path=tmp_path / "storage_state.json",
+            )
+        ),
+    )
+    payload = ImportStateRequest(
+        cookies=[
+            {
+                "name": "SESSION",
+                "value": "abc",
+                "domain": "jwxt.sysu.edu.cn",
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,
+                "sameSite": "None",
+            }
+        ]
+    )
+
+    result = auth.import_state(payload)
+
+    assert result.imported is True
+    assert result.cookie_count == 1
+    assert auth.state_file.exists()
+
+
+def test_timetable_returns_live_payload_when_authenticated() -> None:
+    client = TestClient(create_app())
+    timetable = TimetableResponse(
+        term="2025-2",
+        stale=False,
+        source="live",
+        entries=[
+            {
+                "term": "2025-2",
+                "course_name": "操作系统原理",
+                "teacher": "陈鹏飞",
+                "weekday": 1,
+                "start_section": 1,
+                "end_section": 2,
+                "weeks": [5],
+                "location": "东校园-公共教学楼D栋东D204",
+                "raw_source": {"segments": []},
+            }
+        ],
+    )
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch("sysu_jwxt_agent.services.jwxt.JwxtClient._fetch_live_timetable", return_value=timetable),
+    ):
+        response = client.get("/timetable")
+
+    assert response.status_code == 200
+    assert response.json()["term"] == "2025-2"
+    assert response.json()["entries"][0]["course_name"] == "操作系统原理"
