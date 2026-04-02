@@ -1,5 +1,7 @@
 # SYSU JWXT Agent
 
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
 Local service and agent-facing tooling for reading data from the SYSU teaching affairs system (`jwxt.sysu.edu.cn`) using an authorized student session.
 
 ## Scope
