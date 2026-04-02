@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import httpx
@@ -117,6 +118,21 @@ class AuthService:
             response = client.get(url, params={"_t": 1775129145})
             response.raise_for_status()
             return response.json()
+
+    def keepalive_probe(self) -> bool:
+        with self._build_client() as client:
+            status_resp = client.get(f"{settings.base_url}/api/login/status", params={"_t": int(time.time())})
+            status_resp.raise_for_status()
+            status_json = status_resp.json()
+            if not bool(status_json.get("data")):
+                return False
+
+            acad_resp = client.get(f"{settings.base_url}/base-info/acadyearterm/showNewAcadlist")
+            acad_resp.raise_for_status()
+            cas_resp = client.get(f"{settings.base_url}/api/sso/cas/login")
+            if cas_resp.status_code not in {200, 301, 302, 303, 307, 308}:
+                return False
+            return True
 
     def _fetch_cas_login_url(self) -> str | None:
         url = f"{settings.base_url}/api/sso/cas/login"

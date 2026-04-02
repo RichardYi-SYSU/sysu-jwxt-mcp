@@ -313,3 +313,27 @@ def test_grades_can_include_raw_when_requested() -> None:
     assert response.status_code == 200
     assert response.json()["entries"][0]["raw_source"]["score"] == "92"
     assert response.json()["raw_records"] == [{"courseName": "操作系统原理"}]
+
+
+def test_keepalive_routes_work() -> None:
+    client = TestClient(create_app())
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch("sysu_jwxt_agent.services.auth.AuthService.keepalive_probe", return_value=True),
+    ):
+        status = client.get("/auth/keepalive/status")
+        assert status.status_code == 200
+        assert status.json()["enabled"] is True
+
+        started = client.post("/auth/keepalive/start")
+        assert started.status_code == 200
+        assert started.json()["running"] is True
+
+        ping = client.post("/auth/keepalive/ping")
+        assert ping.status_code == 200
+        assert ping.json()["last_ok"] is True
+
+        stopped = client.post("/auth/keepalive/stop")
+        assert stopped.status_code == 200
+        assert stopped.json()["running"] is False

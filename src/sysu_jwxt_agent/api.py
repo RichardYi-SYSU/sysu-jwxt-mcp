@@ -6,6 +6,7 @@ from sysu_jwxt_agent.schemas import (
     HealthResponse,
     ImportStateRequest,
     ImportStateResponse,
+    KeepaliveStatus,
     SessionStatus,
     TimetableResponse,
 )
@@ -17,7 +18,7 @@ from sysu_jwxt_agent.services.jwxt import (
 )
 
 
-def build_router(jwxt_client: JwxtClient, auth_service) -> APIRouter:
+def build_router(jwxt_client: JwxtClient, auth_service, keepalive_service=None) -> APIRouter:
     router = APIRouter()
 
     def get_client() -> JwxtClient:
@@ -38,6 +39,30 @@ def build_router(jwxt_client: JwxtClient, auth_service) -> APIRouter:
     @router.post("/auth/import-state", response_model=ImportStateResponse)
     async def import_state(payload: ImportStateRequest) -> ImportStateResponse:
         return auth_service.import_state(payload)
+
+    @router.get("/auth/keepalive/status", response_model=KeepaliveStatus, response_model_exclude_none=True)
+    async def keepalive_status() -> KeepaliveStatus:
+        if keepalive_service is None:
+            return KeepaliveStatus(enabled=False, interval_seconds=0, running=False)
+        return keepalive_service.status()
+
+    @router.post("/auth/keepalive/start", response_model=KeepaliveStatus, response_model_exclude_none=True)
+    async def keepalive_start() -> KeepaliveStatus:
+        if keepalive_service is None:
+            return KeepaliveStatus(enabled=False, interval_seconds=0, running=False)
+        return keepalive_service.start()
+
+    @router.post("/auth/keepalive/stop", response_model=KeepaliveStatus, response_model_exclude_none=True)
+    async def keepalive_stop() -> KeepaliveStatus:
+        if keepalive_service is None:
+            return KeepaliveStatus(enabled=False, interval_seconds=0, running=False)
+        return keepalive_service.stop()
+
+    @router.post("/auth/keepalive/ping", response_model=KeepaliveStatus, response_model_exclude_none=True)
+    async def keepalive_ping() -> KeepaliveStatus:
+        if keepalive_service is None:
+            return KeepaliveStatus(enabled=False, interval_seconds=0, running=False)
+        return keepalive_service.ping_once()
 
     @router.get("/timetable", response_model=TimetableResponse, response_model_exclude_none=True)
     def get_timetable(

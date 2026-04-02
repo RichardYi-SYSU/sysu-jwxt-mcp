@@ -16,6 +16,16 @@ class SessionStatus(BaseModel):
     upstream_code: int | None = None
 
 
+class KeepaliveStatus(BaseModel):
+    enabled: bool
+    interval_seconds: int
+    running: bool
+    authenticated: bool | None = None
+    last_ok: bool | None = None
+    last_checked_at: str | None = None
+    last_error: str | None = None
+
+
 class CookieItem(BaseModel):
     name: str
     value: str

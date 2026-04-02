@@ -6,6 +6,7 @@ from sysu_jwxt_agent.services.auth import AuthService
 from sysu_jwxt_agent.services.browser import BrowserLaunchSpec, BrowserSessionManager
 from sysu_jwxt_agent.services.cache import TimetableCache
 from sysu_jwxt_agent.services.jwxt import JwxtClient
+from sysu_jwxt_agent.services.keepalive import SessionKeepaliveService
 
 
 def create_app() -> FastAPI:
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
         )
     )
     auth_service = AuthService(settings.state_dir, browser_manager=browser_manager)
+    keepalive_service = SessionKeepaliveService(auth_service=auth_service, interval_seconds=120)
     cache = TimetableCache(settings.cache_dir)
     jwxt_client = JwxtClient(
         auth_service=auth_service,
@@ -29,7 +31,13 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Local API for authorized timetable access from SYSU JWXT.",
     )
-    app.include_router(build_router(jwxt_client=jwxt_client, auth_service=auth_service))
+    app.include_router(
+        build_router(
+            jwxt_client=jwxt_client,
+            auth_service=auth_service,
+            keepalive_service=keepalive_service,
+        )
+    )
     return app
 
 
