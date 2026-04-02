@@ -231,7 +231,7 @@ class JwxtClient:
             browser.close()
 
         exam_weeks = [self._build_exam_week(item) for item in payload.get("examWeeks", [])]
-        if exam_week_id and not exam_weeks:
+        if exam_week_id and not payload.get("attempts"):
             raise InvalidQueryError(f"Exam week {exam_week_id} was not found for term {payload['academicYear']}.")
 
         attempts = []

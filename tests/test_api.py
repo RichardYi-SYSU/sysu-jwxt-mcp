@@ -147,3 +147,21 @@ def test_exams_returns_live_payload_when_authenticated() -> None:
     assert response.status_code == 200
     assert response.json()["term"] == "2025-2"
     assert response.json()["selected_exam_week"]["exam_week_name"] == "18-19周期末考"
+
+
+def test_exams_returns_400_for_invalid_exam_week_id() -> None:
+    client = TestClient(create_app())
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch(
+            "sysu_jwxt_agent.services.jwxt.JwxtClient._fetch_live_exams",
+            side_effect=__import__("sysu_jwxt_agent.services.jwxt", fromlist=["InvalidQueryError"]).InvalidQueryError(
+                "Exam week invalid was not found for term 2024-1."
+            ),
+        ),
+    ):
+        response = client.get("/exams", params={"term": "2024-1", "exam_week_id": "invalid"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_query"
