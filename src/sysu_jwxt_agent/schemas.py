@@ -49,7 +49,7 @@ class TimetableEntry(BaseModel):
     end_section: int = Field(ge=1)
     weeks: list[int] = Field(default_factory=list)
     location: str | None = None
-    raw_source: dict = Field(default_factory=dict)
+    raw_source: dict | None = None
 
 
 class TimetableResponse(BaseModel):
@@ -80,7 +80,7 @@ class ExamEntry(BaseModel):
     exam_mode: str | None = None
     weekday: int | None = Field(default=None, ge=1, le=7)
     section_label: str | None = None
-    raw_source: dict = Field(default_factory=dict)
+    raw_source: dict | None = None
 
 
 class ExamsResponse(BaseModel):
@@ -90,4 +90,4 @@ class ExamsResponse(BaseModel):
     selected_exam_week: ExamWeek | None = None
     exam_weeks: list[ExamWeek] = Field(default_factory=list)
     entries: list[ExamEntry] = Field(default_factory=list)
-    raw_records: list[dict] = Field(default_factory=list)
+    raw_records: list[dict] | None = None

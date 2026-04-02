@@ -50,27 +50,33 @@ class JwxtClient:
         self._cache = cache
         self._browser_manager = browser_manager
 
-    def get_timetable(self, term: str) -> TimetableResponse:
+    def get_timetable(self, term: str, include_raw: bool = False) -> TimetableResponse:
         if not self._auth_service.is_authenticated():
             raise AuthenticationRequiredError("No authenticated session is available.")
 
         try:
-            timetable = self._fetch_live_timetable(term)
+            timetable = self._fetch_live_timetable(term, include_raw=include_raw)
             self._cache.save(timetable)
-            return timetable
+            return self._to_agent_timetable(timetable, include_raw=include_raw)
         except Exception:
             cached = self._cache.load(term)
             if cached is not None:
-                return cached
+                return self._to_agent_timetable(cached, include_raw=include_raw)
             raise
 
-    def get_exams(self, term: str, exam_week_id: str | None = None) -> ExamsResponse:
+    def get_exams(
+        self,
+        term: str,
+        exam_week_id: str | None = None,
+        include_raw: bool = False,
+    ) -> ExamsResponse:
         if not self._auth_service.is_authenticated():
             raise AuthenticationRequiredError("No authenticated session is available.")
 
-        return self._fetch_live_exams(term=term, exam_week_id=exam_week_id)
+        exams = self._fetch_live_exams(term=term, exam_week_id=exam_week_id, include_raw=include_raw)
+        return self._to_agent_exams(exams, include_raw=include_raw)
 
-    def _fetch_live_timetable(self, term: str) -> TimetableResponse:
+    def _fetch_live_timetable(self, term: str, include_raw: bool) -> TimetableResponse:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
@@ -134,6 +140,7 @@ class JwxtClient:
             term=payload["academicYear"],
             week=payload["currentWeek"],
             rows=timetable_json.get("data", []),
+            include_raw=include_raw,
         )
         return TimetableResponse(
             term=payload["academicYear"],
@@ -142,7 +149,7 @@ class JwxtClient:
             entries=entries,
         )
 
-    def _fetch_live_exams(self, term: str, exam_week_id: str | None) -> ExamsResponse:
+    def _fetch_live_exams(self, term: str, exam_week_id: str | None, include_raw: bool) -> ExamsResponse:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
@@ -267,6 +274,7 @@ class JwxtClient:
                 term=payload["academicYear"],
                 selected_exam_week=selected_exam_week,
                 rows=raw_records,
+                include_raw=include_raw,
             )
 
         return ExamsResponse(
@@ -276,7 +284,7 @@ class JwxtClient:
             selected_exam_week=selected_exam_week,
             exam_weeks=exam_weeks,
             entries=entries,
-            raw_records=raw_records,
+            raw_records=raw_records if include_raw else None,
         )
 
     def _parse_timetable_entries(
@@ -285,6 +293,7 @@ class JwxtClient:
         term: str,
         week: int,
         rows: list[dict],
+        include_raw: bool,
     ) -> list[TimetableEntry]:
         parsed_items: list[dict] = []
 
@@ -310,11 +319,15 @@ class JwxtClient:
                             "teacher": teacher,
                             "location": location,
                             "week": week,
-                            "raw_source": {
-                                "row": row,
-                                "field": field,
-                                "block": block,
-                            },
+                            "raw_source": (
+                                {
+                                    "row": row,
+                                    "field": field,
+                                    "block": block,
+                                }
+                                if include_raw
+                                else None
+                            ),
                         }
                     )
 
@@ -347,7 +360,7 @@ class JwxtClient:
                         end_section=end,
                         weeks=[ordered[0]["week"]],
                         location=location,
-                        raw_source={"segments": raw_sources},
+                        raw_source={"segments": raw_sources} if include_raw else None,
                     )
                 )
 
@@ -384,6 +397,7 @@ class JwxtClient:
         term: str,
         selected_exam_week: ExamWeek | None,
         rows: list[dict],
+        include_raw: bool,
     ) -> list[ExamEntry]:
         entries: list[ExamEntry] = []
 
@@ -428,11 +442,15 @@ class JwxtClient:
                             exam_mode=cell.get("examMode"),
                             weekday=weekday if weekday in WEEKDAY_FIELDS else None,
                             section_label=section_label,
-                            raw_source={
-                                "row_index": row_index,
-                                "cell_index": cell_index,
-                                "cell": cell,
-                            },
+                            raw_source=(
+                                {
+                                    "row_index": row_index,
+                                    "cell_index": cell_index,
+                                    "cell": cell,
+                                }
+                                if include_raw
+                                else None
+                            ),
                         )
                     )
 
@@ -444,4 +462,51 @@ class JwxtClient:
                 entry.section_label or "",
                 entry.course_name or "",
             ),
+        )
+
+    def _to_agent_timetable(
+        self,
+        timetable: TimetableResponse,
+        *,
+        include_raw: bool,
+    ) -> TimetableResponse:
+        if include_raw:
+            return timetable
+
+        entries = []
+        for entry in timetable.entries:
+            cleaned = entry.model_copy(deep=True)
+            cleaned.raw_source = None
+            entries.append(cleaned)
+
+        return TimetableResponse(
+            term=timetable.term,
+            stale=timetable.stale,
+            source=timetable.source,
+            entries=entries,
+        )
+
+    def _to_agent_exams(
+        self,
+        exams: ExamsResponse,
+        *,
+        include_raw: bool,
+    ) -> ExamsResponse:
+        if include_raw:
+            return exams
+
+        entries = []
+        for entry in exams.entries:
+            cleaned = entry.model_copy(deep=True)
+            cleaned.raw_source = None
+            entries.append(cleaned)
+
+        return ExamsResponse(
+            term=exams.term,
+            stale=exams.stale,
+            source=exams.source,
+            selected_exam_week=exams.selected_exam_week,
+            exam_weeks=exams.exam_weeks,
+            entries=entries,
+            raw_records=None,
         )
