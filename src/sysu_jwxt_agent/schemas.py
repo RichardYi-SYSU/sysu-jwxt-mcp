@@ -19,11 +19,14 @@ class SessionStatus(BaseModel):
 class KeepaliveStatus(BaseModel):
     enabled: bool
     interval_seconds: int
+    jitter_seconds: int = 0
     running: bool
     authenticated: bool | None = None
     last_ok: bool | None = None
     last_checked_at: str | None = None
     last_error: str | None = None
+    tick_count: int = 0
+    consecutive_failures: int = 0
 
 
 class CookieItem(BaseModel):
@@ -64,6 +67,7 @@ class TimetableEntry(BaseModel):
 
 class TimetableResponse(BaseModel):
     term: str
+    week: int | None = None
     stale: bool = False
     source: Literal["live", "cache"]
     entries: list[TimetableEntry]
@@ -111,6 +115,7 @@ class GradeEntry(BaseModel):
     credit: float | None = None
     score: str | None = None
     grade_point: float | None = None
+    rank: str | None = None
     exam_nature: str | None = None
     assessment_method: str | None = None
     score_flag: str | None = None
@@ -125,3 +130,52 @@ class GradesResponse(BaseModel):
     summary: dict = Field(default_factory=dict)
     distribution: list[dict] = Field(default_factory=list)
     raw_records: list[dict] | None = None
+
+
+class EmptyClassroomEntry(BaseModel):
+    date: str
+    campus: str
+    building: str | None = None
+    classroom_name: str
+    classroom_id: str | None = None
+    available_sections: list[str] = Field(default_factory=list)
+    available_periods: list[str] = Field(default_factory=list)
+    raw_source: dict | None = None
+
+
+class EmptyClassroomsResponse(BaseModel):
+    date: str
+    campus: str
+    campus_id: str
+    section_range: str
+    stale: bool = False
+    source: Literal["live", "cache"]
+    entries: list[EmptyClassroomEntry] = Field(default_factory=list)
+    raw_records: list[dict] | None = None
+
+
+class CetScoreEntry(BaseModel):
+    level: str | None = None
+    score: int | None = None
+    exam_year: str | None = None
+    half_year: str | None = None
+    subject: str | None = None
+    exam_time: str | None = None
+    written_exam_number: str | None = None
+    apply_campus: str | None = None
+    missing_test: bool | None = None
+    violation: bool | None = None
+    hearing_score: int | None = None
+    reading_score: int | None = None
+    writing_score: int | None = None
+    oral_score: str | None = None
+    raw_source: dict | None = None
+
+
+class CetScoresResponse(BaseModel):
+    level: Literal[4, 6]
+    stale: bool = False
+    source: Literal["live", "cache"]
+    total_records: int = 0
+    matched_records: int = 0
+    entries: list[CetScoreEntry] = Field(default_factory=list)

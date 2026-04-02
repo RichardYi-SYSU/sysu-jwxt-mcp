@@ -115,7 +115,7 @@ class AuthService:
     def _probe_upstream_status(self) -> dict:
         url = f"{settings.base_url}/api/login/status"
         with self._build_client() as client:
-            response = client.get(url, params={"_t": 1775129145})
+            response = client.get(url, params={"_t": int(time.time())})
             response.raise_for_status()
             return response.json()
 
@@ -127,12 +127,34 @@ class AuthService:
             if not bool(status_json.get("data")):
                 return False
 
-            acad_resp = client.get(f"{settings.base_url}/base-info/acadyearterm/showNewAcadlist")
-            acad_resp.raise_for_status()
-            cas_resp = client.get(f"{settings.base_url}/api/sso/cas/login")
-            if cas_resp.status_code not in {200, 301, 302, 303, 307, 308}:
-                return False
+            # Keepalive is primarily determined by authenticated login status.
+            # Additional touch request is best-effort to keep active JWXT context.
+            try:
+                acad_resp = client.get(
+                    f"{settings.base_url}/base-info/acadyearterm/showNewAcadlist",
+                    params={"_t": int(time.time() * 1000)},
+                    headers=self._jwxt_ajax_headers(),
+                )
+                if acad_resp.status_code not in {200, 304}:
+                    return True
+                payload = acad_resp.json()
+                if payload.get("code") != 200:
+                    return True
+            except Exception:
+                # Non-fatal for keepalive validity; login/status above is authoritative.
+                return True
             return True
+
+    def _jwxt_ajax_headers(self) -> dict[str, str]:
+        return {
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": f"{settings.base_url}/#/student",
+            "Origin": "https://jwxt.sysu.edu.cn",
+            "moduleid": "null",
+            "menuid": "null",
+            "lastaccesstime": str(int(time.time() * 1000)),
+        }
 
     def _fetch_cas_login_url(self) -> str | None:
         url = f"{settings.base_url}/api/sso/cas/login"

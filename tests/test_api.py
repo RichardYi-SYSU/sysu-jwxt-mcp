@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from sysu_jwxt_agent.main import create_app
-from sysu_jwxt_agent.schemas import ExamsResponse, GradesResponse, TimetableResponse
+from sysu_jwxt_agent.schemas import CetScoresResponse, EmptyClassroomsResponse, ExamsResponse, GradesResponse, TimetableResponse
 
 
 def test_health() -> None:
@@ -169,6 +169,130 @@ def test_exams_returns_400_for_invalid_exam_week_id() -> None:
     assert response.json()["detail"]["code"] == "invalid_query"
 
 
+def test_exams_accepts_exam_week_type_query() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.jwxt.JwxtClient.get_exams") as mocked_get_exams:
+        mocked_get_exams.return_value = ExamsResponse(
+            term="2025-2",
+            stale=False,
+            source="live",
+            selected_exam_week=None,
+            exam_weeks=[],
+            entries=[],
+            raw_records=None,
+        )
+
+        response = client.get(
+            "/exams",
+            params={"term": "2025-2", "exam_week_type": "18-19周期末考"},
+        )
+
+    assert response.status_code == 200
+    mocked_get_exams.assert_called_once_with(
+        term="2025-2",
+        exam_week_id=None,
+        exam_week_type="18-19周期末考",
+        include_raw=False,
+    )
+
+
+def test_exams_rejects_unknown_exam_week_type_query() -> None:
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/exams",
+        params={"term": "2025-2", "exam_week_type": "其他类型"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_empty_classrooms_requires_date_campus_and_section_range() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/classrooms/empty")
+
+    assert response.status_code == 422
+
+
+def test_empty_classrooms_accepts_required_query() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.jwxt.JwxtClient.get_empty_classrooms") as mocked_get_empty_classrooms:
+        mocked_get_empty_classrooms.return_value = EmptyClassroomsResponse(
+            date="2026-04-02",
+            campus="东校园",
+            campus_id="5063559",
+            section_range="1-4",
+            stale=False,
+            source="live",
+            entries=[],
+            raw_records=None,
+        )
+
+        response = client.get(
+            "/classrooms/empty",
+            params={"date": "2026-04-02", "campus": "东校园", "section_range": "1-4"},
+        )
+
+    assert response.status_code == 200
+    mocked_get_empty_classrooms.assert_called_once_with(
+        date_value="2026-04-02",
+        campus="东校园",
+        section_range="1-4",
+        include_raw=False,
+    )
+
+
+def test_empty_classrooms_returns_400_for_invalid_section_range() -> None:
+    client = TestClient(create_app())
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch(
+            "sysu_jwxt_agent.services.jwxt.JwxtClient.get_empty_classrooms",
+            side_effect=__import__("sysu_jwxt_agent.services.jwxt", fromlist=["InvalidQueryError"]).InvalidQueryError(
+                "section_range must use X-Y within 1-16, received 8-2."
+            ),
+        ),
+    ):
+        response = client.get(
+            "/classrooms/empty",
+            params={"date": "2026-04-02", "campus": "东校园", "section_range": "8-2"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_query"
+
+
+def test_cet_scores_accepts_level_query() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.jwxt.JwxtClient.get_cet_scores") as mocked_get_cet_scores:
+        mocked_get_cet_scores.return_value = CetScoresResponse(
+            level=4,
+            stale=False,
+            source="live",
+            total_records=2,
+            matched_records=1,
+            entries=[{"level": "CET-4", "score": "612"}],
+        )
+
+        response = client.get("/cet-scores", params={"level": 4})
+
+    assert response.status_code == 200
+    mocked_get_cet_scores.assert_called_once_with(level=4, include_raw=False)
+
+
+def test_cet_scores_rejects_invalid_level() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/cet-scores", params={"level": 5})
+
+    assert response.status_code == 422
+
+
 def test_timetable_can_include_raw_when_requested() -> None:
     client = TestClient(create_app())
     timetable = TimetableResponse(
@@ -198,6 +322,39 @@ def test_timetable_can_include_raw_when_requested() -> None:
 
     assert response.status_code == 200
     assert response.json()["entries"][0]["raw_source"]["segments"][0]["block"] == "操作系统原理"
+
+
+def test_timetable_supports_week_query() -> None:
+    client = TestClient(create_app())
+    timetable = TimetableResponse(
+        term="2025-2",
+        week=10,
+        stale=False,
+        source="live",
+        entries=[
+            {
+                "term": "2025-2",
+                "course_name": "操作系统原理",
+                "teacher": "陈鹏飞",
+                "weekday": 1,
+                "start_section": 1,
+                "end_section": 2,
+                "weeks": [10],
+                "location": "东D204",
+            }
+        ],
+    )
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch("sysu_jwxt_agent.services.jwxt.JwxtClient._fetch_live_timetable", return_value=timetable),
+    ):
+        response = client.get("/timetable", params={"term": "2025-2", "week": 10})
+
+    assert response.status_code == 200
+    assert response.json()["term"] == "2025-2"
+    assert response.json()["week"] == 10
+    assert response.json()["entries"][0]["weeks"] == [10]
 
 
 def test_exams_can_include_raw_when_requested() -> None:
@@ -261,9 +418,11 @@ def test_grades_returns_live_payload_when_authenticated() -> None:
                 "term": "2025-2",
                 "course_name": "操作系统原理",
                 "course_code": "CS2001",
+                "course_type": "专必",
                 "credit": 3.0,
                 "score": "92",
                 "grade_point": 4.0,
+                "rank": "1/30",
                 "raw_source": {"score": "92"},
             }
         ],
@@ -281,6 +440,8 @@ def test_grades_returns_live_payload_when_authenticated() -> None:
     assert response.status_code == 200
     assert response.json()["term"] == "2025-2"
     assert response.json()["entries"][0]["course_name"] == "操作系统原理"
+    assert response.json()["entries"][0]["course_type"] == "专必"
+    assert response.json()["entries"][0]["rank"] == "1/30"
     assert "raw_source" not in response.json()["entries"][0]
     assert "raw_records" not in response.json()
 
@@ -295,7 +456,9 @@ def test_grades_can_include_raw_when_requested() -> None:
             {
                 "term": "2025-2",
                 "course_name": "操作系统原理",
+                "course_type": "专必",
                 "score": "92",
+                "rank": "1/30",
                 "raw_source": {"score": "92"},
             }
         ],
@@ -312,6 +475,8 @@ def test_grades_can_include_raw_when_requested() -> None:
 
     assert response.status_code == 200
     assert response.json()["entries"][0]["raw_source"]["score"] == "92"
+    assert response.json()["entries"][0]["course_type"] == "专必"
+    assert response.json()["entries"][0]["rank"] == "1/30"
     assert response.json()["raw_records"] == [{"courseName": "操作系统原理"}]
 
 
@@ -325,6 +490,8 @@ def test_keepalive_routes_work() -> None:
         status = client.get("/auth/keepalive/status")
         assert status.status_code == 200
         assert status.json()["enabled"] is True
+        assert status.json()["interval_seconds"] == 300
+        assert status.json()["jitter_seconds"] == 20
 
         started = client.post("/auth/keepalive/start")
         assert started.status_code == 200
@@ -333,6 +500,8 @@ def test_keepalive_routes_work() -> None:
         ping = client.post("/auth/keepalive/ping")
         assert ping.status_code == 200
         assert ping.json()["last_ok"] is True
+        assert ping.json()["tick_count"] >= 1
+        assert ping.json()["consecutive_failures"] == 0
 
         stopped = client.post("/auth/keepalive/stop")
         assert stopped.status_code == 200

@@ -1,10 +1,15 @@
 import json
+import re
 from collections import defaultdict
 
 from playwright.sync_api import sync_playwright
 
 from sysu_jwxt_agent.config import settings
 from sysu_jwxt_agent.schemas import (
+    CetScoreEntry,
+    CetScoresResponse,
+    EmptyClassroomEntry,
+    EmptyClassroomsResponse,
     ExamEntry,
     ExamsResponse,
     ExamWeek,
@@ -40,6 +45,25 @@ WEEKDAY_FIELDS = {
     7: "sunday",
 }
 
+SECTION_FIELDS: list[tuple[int, str]] = [
+    (1, "oneSection"),
+    (2, "twoSection"),
+    (3, "threeSection"),
+    (4, "fourSection"),
+    (5, "fiveSection"),
+    (6, "sixSection"),
+    (7, "sevenSection"),
+    (8, "eightSection"),
+    (9, "nineSection"),
+    (10, "tenSection"),
+    (11, "elevenSection"),
+    (12, "twelveSection"),
+    (13, "thirteenSection"),
+    (14, "fourteenSection"),
+    (15, "fifteenSection"),
+    (16, "sixteenSection"),
+]
+
 
 class JwxtClient:
     def __init__(
@@ -52,16 +76,21 @@ class JwxtClient:
         self._cache = cache
         self._browser_manager = browser_manager
 
-    def get_timetable(self, term: str, include_raw: bool = False) -> TimetableResponse:
+    def get_timetable(
+        self,
+        term: str,
+        week: int | None = None,
+        include_raw: bool = False,
+    ) -> TimetableResponse:
         if not self._auth_service.is_authenticated():
             raise AuthenticationRequiredError("No authenticated session is available.")
 
         try:
-            timetable = self._fetch_live_timetable(term, include_raw=include_raw)
+            timetable = self._fetch_live_timetable(term=term, week=week, include_raw=include_raw)
             self._cache.save(timetable)
             return self._to_agent_timetable(timetable, include_raw=include_raw)
         except Exception:
-            cached = self._cache.load(term)
+            cached = self._cache.load(term=term, week=week)
             if cached is not None:
                 return self._to_agent_timetable(cached, include_raw=include_raw)
             raise
@@ -70,12 +99,18 @@ class JwxtClient:
         self,
         term: str,
         exam_week_id: str | None = None,
+        exam_week_type: str | None = None,
         include_raw: bool = False,
     ) -> ExamsResponse:
         if not self._auth_service.is_authenticated():
             raise AuthenticationRequiredError("No authenticated session is available.")
 
-        exams = self._fetch_live_exams(term=term, exam_week_id=exam_week_id, include_raw=include_raw)
+        exams = self._fetch_live_exams(
+            term=term,
+            exam_week_id=exam_week_id,
+            exam_week_type=exam_week_type,
+            include_raw=include_raw,
+        )
         return self._to_agent_exams(exams, include_raw=include_raw)
 
     def get_grades(self, term: str, include_raw: bool = False) -> GradesResponse:
@@ -85,7 +120,34 @@ class JwxtClient:
         grades = self._fetch_live_grades(term=term, include_raw=include_raw)
         return self._to_agent_grades(grades, include_raw=include_raw)
 
-    def _fetch_live_timetable(self, term: str, include_raw: bool) -> TimetableResponse:
+    def get_cet_scores(self, *, level: int, include_raw: bool = False) -> CetScoresResponse:
+        if not self._auth_service.is_authenticated():
+            raise AuthenticationRequiredError("No authenticated session is available.")
+        return self._fetch_live_cet_scores(level=level, include_raw=include_raw)
+
+    def get_empty_classrooms(
+        self,
+        *,
+        date_value: str,
+        campus: str,
+        section_range: str,
+        include_raw: bool = False,
+    ) -> EmptyClassroomsResponse:
+        if not self._auth_service.is_authenticated():
+            raise AuthenticationRequiredError("No authenticated session is available.")
+
+        section_start, section_end = self._parse_section_range(section_range)
+        classrooms = self._fetch_live_empty_classrooms(
+            date_value=date_value,
+            campus=campus,
+            section_range=section_range,
+            section_start=section_start,
+            section_end=section_end,
+            include_raw=include_raw,
+        )
+        return self._to_agent_empty_classrooms(classrooms, include_raw=include_raw)
+
+    def _fetch_live_timetable(self, term: str, week: int | None, include_raw: bool) -> TimetableResponse:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
@@ -95,7 +157,7 @@ class JwxtClient:
             page.goto(f"{settings.base_url}/#/student", wait_until="networkidle", timeout=30000)
 
             payload = page.evaluate(
-                """async ({ baseUrl, requestedTerm }) => {
+                """async ({ baseUrl, requestedTerm, requestedWeek }) => {
                     const mkHeaders = () => ({
                       'X-Requested-With': 'XMLHttpRequest',
                       'Accept': 'application/json, text/plain, */*',
@@ -120,21 +182,27 @@ class JwxtClient:
 
                     const weekly = await doFetch(`${baseUrl}/base-info/school-calender/weekly?academicYear=${encodeURIComponent(academicYear)}&_t=${Date.now()}`);
                     const weeklyJson = JSON.parse(weekly.text);
-                    const currentWeek = weeklyJson.data.nowTimeWeekly ?? weeklyJson.data.nowWeekly;
+                    const currentWeek = Number(weeklyJson.data.nowTimeWeekly ?? weeklyJson.data.nowWeekly);
+                    const selectedWeek = Number(requestedWeek || currentWeek);
 
-                    const calendar = await doFetch(`${baseUrl}/base-info/school-calender?academicYear=${encodeURIComponent(academicYear)}&weekly=${encodeURIComponent(currentWeek)}&_t=${Date.now()}`);
-                    const timetable = await doFetch(`${baseUrl}/timetable-search/classTableInfo/selectStudentClassTable?academicYear=${encodeURIComponent(academicYear)}&weekly=${encodeURIComponent(currentWeek)}&_t=${Date.now()}`);
+                    const calendar = await doFetch(`${baseUrl}/base-info/school-calender?academicYear=${encodeURIComponent(academicYear)}&weekly=${encodeURIComponent(selectedWeek)}&_t=${Date.now()}`);
+                    const timetable = await doFetch(`${baseUrl}/timetable-search/classTableInfo/selectStudentClassTable?academicYear=${encodeURIComponent(academicYear)}&weekly=${encodeURIComponent(selectedWeek)}&_t=${Date.now()}`);
 
                     return {
                       academicYear,
-                      currentWeek: Number(currentWeek),
+                      currentWeek,
+                      selectedWeek,
                       academic,
                       weekly,
                       calendar,
                       timetable
                     };
                 }""",
-                {"baseUrl": settings.base_url, "requestedTerm": term},
+                {
+                    "baseUrl": settings.base_url,
+                    "requestedTerm": term,
+                    "requestedWeek": week,
+                },
             )
             browser.close()
 
@@ -147,18 +215,25 @@ class JwxtClient:
         timetable_json = json.loads(payload["timetable"]["text"])
         entries = self._parse_timetable_entries(
             term=payload["academicYear"],
-            week=payload["currentWeek"],
+            week=payload["selectedWeek"],
             rows=timetable_json.get("data", []),
             include_raw=include_raw,
         )
         return TimetableResponse(
             term=payload["academicYear"],
+            week=payload["selectedWeek"],
             stale=False,
             source="live",
             entries=entries,
         )
 
-    def _fetch_live_exams(self, term: str, exam_week_id: str | None, include_raw: bool) -> ExamsResponse:
+    def _fetch_live_exams(
+        self,
+        term: str,
+        exam_week_id: str | None,
+        exam_week_type: str | None,
+        include_raw: bool,
+    ) -> ExamsResponse:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
@@ -168,7 +243,7 @@ class JwxtClient:
             page.goto(f"{settings.base_url}/mk/#/stuExamInfo", wait_until="networkidle", timeout=30000)
 
             payload = page.evaluate(
-                """async ({ baseUrl, requestedTerm, requestedExamWeekId }) => {
+                """async ({ baseUrl, requestedTerm, requestedExamWeekId, requestedExamWeekType }) => {
                     const mkHeaders = (jsonBody = false) => {
                       const headers = {
                         'X-Requested-With': 'XMLHttpRequest',
@@ -205,9 +280,28 @@ class JwxtClient:
                     );
                     const examWeeksJson = JSON.parse(examWeeksResponse.text);
                     const examWeeks = Array.isArray(examWeeksJson.data) ? examWeeksJson.data : [];
-                    const targetWeeks = requestedExamWeekId
+                    const normalize = (value) => String(value || '').replace(/\\s+/g, '');
+                    const matchExamWeekType = (weekObj, type) => {
+                      if (!type) {
+                        return true;
+                      }
+                      const name = normalize(weekObj?.examWeekName || weekObj?.weekName || '');
+                      if (type === '缓补考') {
+                        return name.includes('缓补考');
+                      }
+                      if (type === '10-17周结课考') {
+                        return name.includes('10-17周结课考') || (name.includes('10-17周') && name.includes('结课'));
+                      }
+                      if (type === '18-19周期末考') {
+                        return name.includes('18-19周期末考') || (name.includes('18-19周') && name.includes('期末'));
+                      }
+                      return false;
+                    };
+
+                    let targetWeeks = requestedExamWeekId
                       ? examWeeks.filter((week) => week.examWeekId === requestedExamWeekId)
                       : examWeeks;
+                    targetWeeks = targetWeeks.filter((week) => matchExamWeekType(week, requestedExamWeekType));
 
                     const attempts = [];
                     for (const examWeekObj of targetWeeks) {
@@ -235,13 +329,15 @@ class JwxtClient:
                     return {
                       academicYear,
                       examWeeks,
-                      attempts
+                      attempts,
+                      targetWeekCount: targetWeeks.length,
                     };
                 }""",
                 {
                     "baseUrl": settings.base_url,
                     "requestedTerm": term,
                     "requestedExamWeekId": exam_week_id,
+                    "requestedExamWeekType": exam_week_type,
                 },
             )
             browser.close()
@@ -249,6 +345,8 @@ class JwxtClient:
         exam_weeks = [self._build_exam_week(item) for item in payload.get("examWeeks", [])]
         if exam_week_id and not payload.get("attempts"):
             raise InvalidQueryError(f"Exam week {exam_week_id} was not found for term {payload['academicYear']}.")
+        if exam_week_type and not payload.get("targetWeekCount"):
+            raise InvalidQueryError(f"Exam week type {exam_week_type} was not found for term {payload['academicYear']}.")
 
         attempts = []
         for attempt in payload.get("attempts", []):
@@ -323,43 +421,81 @@ class JwxtClient:
                       return { status: resp.status, text };
                     };
 
-                    const academic = await doFetch(`${baseUrl}/base-info/acadyearterm/showNewAcadlist?_t=${Date.now()}`);
-                    const academicJson = JSON.parse(academic.text);
-                    const academicYear = requestedTerm === 'current'
-                      ? academicJson.data.acadYearSemester
+                    const checkStuStatus = await doFetch(`${baseUrl}/achievement-manage/score-check/checkStuStatus?_t=${Date.now()}`);
+                    const pullResponse = await doFetch(`${baseUrl}/achievement-manage/score-check/getPull?_t=${Date.now()}`);
+                    const pie = await doFetch(`${baseUrl}/achievement-manage/score-check/getPicPie?_t=${Date.now()}`);
+                    const pullJson = JSON.parse(pullResponse.text);
+                    const pullData = pullJson.data || {};
+                    const addScoreJson = JSON.parse(checkStuStatus.text);
+                    const addScoreFlag = !!(addScoreJson.data && addScoreJson.data.addScoreFlag);
+
+                    let scoSchoolYear;
+                    let scoSemester;
+                    if (requestedTerm === 'current') {
+                      scoSchoolYear = pullData.selectYearPull?.[0]?.dataNumber;
+                      scoSemester = pullData.selectTermPull?.[0]?.termNumber;
+                    } else {
+                      const parts = String(requestedTerm).split('-');
+                      const startYear = Number(parts[0]);
+                      const semester = parts[1];
+                      if (Number.isFinite(startYear) && semester) {
+                        scoSchoolYear = `${startYear}-${startYear + 1}`;
+                        scoSemester = semester;
+                      }
+                    }
+                    const trainTypeCode = pullData.selectTrainType?.[0]?.dataNumber || '01';
+                    const normalizedTerm = scoSchoolYear && scoSemester
+                      ? `${String(scoSchoolYear).split('-')[0]}-${String(scoSemester)}`
                       : requestedTerm;
 
-                    const listV2 = await doFetch(`${baseUrl}/achievement-manage/score-check/listV2?semester=${encodeURIComponent(academicYear)}&_t=${Date.now()}`);
-                    const creditSituation = await doFetch(`${baseUrl}/achievement-manage/score-check/credit-situation?_t=${Date.now()}`);
-                    const pie = await doFetch(`${baseUrl}/achievement-manage/score-check/getPicPie?_t=${Date.now()}`);
+                    const query = new URLSearchParams({
+                      scoSchoolYear: String(scoSchoolYear || ''),
+                      trainTypeCode: String(trainTypeCode),
+                      addScoreFlag: String(addScoreFlag),
+                      scoSemester: String(scoSemester || ''),
+                      _t: String(Date.now()),
+                    }).toString();
+                    const list = await doFetch(`${baseUrl}/achievement-manage/score-check/list?${query}`);
+                    const sortByYear = await doFetch(`${baseUrl}/achievement-manage/score-check/getSortByYear?${query}`);
+                    const stuCreditSitlist = await doFetch(`${baseUrl}/achievement-manage/score-check/stuCreditSitlist?_t=${Date.now()}`);
 
                     return {
-                      academicYear,
-                      listV2,
-                      creditSituation,
-                      pie
+                      requestedTermResolved: `${scoSchoolYear || ''}-${scoSemester || ''}`,
+                      normalizedTerm,
+                      list,
+                      sortByYear,
+                      stuCreditSitlist,
+                      pie,
+                      pullResponse,
+                      checkStuStatus,
                     };
                 }""",
                 {"baseUrl": settings.base_url, "requestedTerm": term},
             )
             browser.close()
 
-        if payload["listV2"]["status"] != 200:
+        if payload["list"]["status"] != 200:
             raise UpstreamNotImplementedError(
-                f"Grades endpoint returned unexpected status {payload['listV2']['status']}."
+                f"Grades endpoint returned unexpected status {payload['list']['status']}."
             )
-        if payload["creditSituation"]["status"] != 200:
+        if payload["sortByYear"]["status"] != 200:
             raise UpstreamNotImplementedError(
-                "Grades summary endpoint returned unexpected status "
-                f"{payload['creditSituation']['status']}."
+                "Grades rank summary endpoint returned unexpected status "
+                f"{payload['sortByYear']['status']}."
+            )
+        if payload["stuCreditSitlist"]["status"] != 200:
+            raise UpstreamNotImplementedError(
+                "Grades credit summary endpoint returned unexpected status "
+                f"{payload['stuCreditSitlist']['status']}."
             )
         if payload["pie"]["status"] != 200:
             raise UpstreamNotImplementedError(
                 f"Grades distribution endpoint returned unexpected status {payload['pie']['status']}."
             )
 
-        list_json = json.loads(payload["listV2"]["text"])
-        credit_json = json.loads(payload["creditSituation"]["text"])
+        list_json = json.loads(payload["list"]["text"])
+        sort_json = json.loads(payload["sortByYear"]["text"])
+        credit_json = json.loads(payload["stuCreditSitlist"]["text"])
         pie_json = json.loads(payload["pie"]["text"])
 
         rows = list_json.get("data", [])
@@ -367,21 +503,31 @@ class JwxtClient:
             rows = []
 
         entries = self._parse_grade_entries(
-            term=payload["academicYear"],
+            term=term if term != "current" else payload.get("normalizedTerm", term),
             rows=rows,
             include_raw=include_raw,
         )
 
-        summary = credit_json.get("data", {})
-        if not isinstance(summary, dict):
-            summary = {}
+        summary: dict = {}
+        rank_summary = sort_json.get("data", {})
+        if isinstance(rank_summary, dict):
+            summary.update(rank_summary)
+        credit_rows = credit_json.get("data", [])
+        if isinstance(credit_rows, list) and credit_rows:
+            first_row = credit_rows[0]
+            if isinstance(first_row, dict):
+                summary["credit_overview"] = first_row
 
-        distribution = pie_json.get("data", [])
+        distribution_source = pie_json.get("data", [])
+        if isinstance(distribution_source, dict):
+            distribution = distribution_source.get("selectPie", [])
+        else:
+            distribution = distribution_source
         if not isinstance(distribution, list):
             distribution = []
 
         return GradesResponse(
-            term=payload["academicYear"],
+            term=term if term != "current" else payload.get("normalizedTerm", term),
             stale=False,
             source="live",
             entries=entries,
@@ -389,6 +535,347 @@ class JwxtClient:
             distribution=distribution,
             raw_records=rows if include_raw else None,
         )
+
+    def _fetch_live_empty_classrooms(
+        self,
+        *,
+        date_value: str,
+        campus: str,
+        section_range: str,
+        section_start: int,
+        section_end: int,
+        include_raw: bool,
+    ) -> EmptyClassroomsResponse:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                storage_state=str(self._browser_manager.storage_state_path)
+            )
+            page = context.new_page()
+            page.goto(
+                f"{settings.base_url}/mk/schedule-web/#/classroomCheckStu?code=jwxsd_jsskqkjkxjscx",
+                wait_until="networkidle",
+                timeout=30000,
+            )
+
+            payload = page.evaluate(
+                """async ({ baseUrl, requestedDate, requestedCampus }) => {
+                    const mkHeaders = (jsonBody = false) => {
+                      const headers = {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json, text/plain, */*',
+                        'moduleid': 'null',
+                        'menuid': 'jwxsd_jsskqkjkxjscx',
+                        'lastaccesstime': String(Date.now())
+                      };
+                      if (jsonBody) {
+                        headers['Content-Type'] = 'application/json;charset=UTF-8';
+                      }
+                      return headers;
+                    };
+                    const doFetch = async (url, options = {}) => {
+                      const resp = await fetch(url, {
+                        credentials: 'include',
+                        ...options
+                      });
+                      const text = await resp.text();
+                      return { status: resp.status, text };
+                    };
+                    const normalize = (value) => String(value || '').replace(/\\s+/g, '').toLowerCase();
+
+                    const campusResponse = await doFetch(
+                      `${baseUrl}/base-info/campus/findCampusNamesBox?_t=${Date.now()}`,
+                      { headers: mkHeaders() }
+                    );
+                    const campusJson = JSON.parse(campusResponse.text);
+                    const campuses = Array.isArray(campusJson.data) ? campusJson.data : [];
+                    const targetInput = normalize(requestedCampus);
+                    const selectedCampus = campuses.find((item) => {
+                      return normalize(item?.id) === targetInput
+                        || normalize(item?.campusName) === targetInput
+                        || normalize(item?.campusNumber) === targetInput;
+                    }) || null;
+
+                    let result = null;
+                    if (selectedCampus) {
+                      const body = {
+                        pageNo: 1,
+                        pageSize: 10,
+                        total: true,
+                        param: {
+                          campusId: selectedCampus.id,
+                          dateA: requestedDate,
+                          dateB: requestedDate,
+                          weekOrTime: 'time'
+                        }
+                      };
+                      result = await doFetch(
+                        `${baseUrl}/schedule/agg/classroomOccupy/pageCheckList?_t=${Date.now()}`,
+                        {
+                          method: 'POST',
+                          headers: mkHeaders(true),
+                          body: JSON.stringify(body)
+                        }
+                      );
+                    }
+
+                    return {
+                      requestedDate,
+                      requestedCampus,
+                      selectedCampus,
+                      campusResponse,
+                      result
+                    };
+                }""",
+                {
+                    "baseUrl": settings.base_url,
+                    "requestedDate": date_value,
+                    "requestedCampus": campus,
+                },
+            )
+            browser.close()
+
+        if payload["campusResponse"]["status"] != 200:
+            raise UpstreamNotImplementedError(
+                "Campus lookup endpoint returned unexpected status "
+                f"{payload['campusResponse']['status']}."
+            )
+
+        selected_campus = payload.get("selectedCampus")
+        if not selected_campus:
+            raise InvalidQueryError(f"Campus {campus} was not found.")
+
+        result = payload.get("result")
+        if not result or result["status"] != 200:
+            status_value = result["status"] if result else "unknown"
+            raise UpstreamNotImplementedError(
+                f"Empty classroom endpoint returned unexpected status {status_value}."
+            )
+
+        result_json = json.loads(result["text"])
+        result_data = result_json.get("data", {})
+        rows = result_data.get("data", []) if isinstance(result_data, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+
+        entries = self._parse_empty_classroom_entries(
+            date_value=date_value,
+            campus_name=str(selected_campus.get("campusName") or ""),
+            section_start=section_start,
+            section_end=section_end,
+            rows=rows,
+            include_raw=include_raw,
+        )
+
+        return EmptyClassroomsResponse(
+            date=date_value,
+            campus=selected_campus.get("campusName") or campus,
+            campus_id=str(selected_campus.get("id") or ""),
+            section_range=section_range,
+            stale=False,
+            source="live",
+            entries=entries,
+            raw_records=rows if include_raw else None,
+        )
+
+    def _fetch_live_cet_scores(self, *, level: int, include_raw: bool) -> CetScoresResponse:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                storage_state=str(self._browser_manager.storage_state_path)
+            )
+            page = context.new_page()
+            page.goto(
+                f"{settings.base_url}/mk/#/stuEnglishGradeAchievement?code=jwxsd_sljcjcx",
+                wait_until="networkidle",
+                timeout=30000,
+            )
+
+            payload = page.evaluate(
+                """async ({ baseUrl }) => {
+                    const mkHeaders = (jsonBody = false) => {
+                      const headers = {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json, text/plain, */*',
+                        'moduleid': 'null',
+                        'menuid': 'jwxsd_sljcjcx',
+                        'lastaccesstime': String(Date.now())
+                      };
+                      if (jsonBody) {
+                        headers['Content-Type'] = 'application/json;charset=UTF-8';
+                      }
+                      return headers;
+                    };
+                    const doFetch = async (url, options = {}) => {
+                      const resp = await fetch(url, {
+                        credentials: 'include',
+                        ...options
+                      });
+                      const text = await resp.text();
+                      return { status: resp.status, text };
+                    };
+
+                    const body = {
+                      pageNo: 1,
+                      pageSize: 200,
+                      total: true,
+                      param: {}
+                    };
+                    const response = await doFetch(
+                      `${baseUrl}/achievement-manage/englishGradeAchievement/stuPageList?_t=${Date.now()}`,
+                      {
+                        method: 'POST',
+                        headers: mkHeaders(true),
+                        body: JSON.stringify(body)
+                      }
+                    );
+
+                    return {
+                      response
+                    };
+                }""",
+                {"baseUrl": settings.base_url},
+            )
+            browser.close()
+
+        response = payload["response"]
+        if response["status"] != 200:
+            raise UpstreamNotImplementedError(
+                f"CET endpoint returned unexpected status {response['status']}."
+            )
+
+        response_json = json.loads(response["text"])
+        rows = self._extract_page_rows(response_json)
+        matched_rows = [row for row in rows if self._detect_cet_level(row) == level]
+        entries = [
+            CetScoreEntry(
+                level=self._first_non_empty(row, ["languageLevel", "cetLevel", "level", "examLevel"]),
+                score=self._as_int(self._first_non_empty(row, ["writtenExaminationTotalScore", "totalScore", "score"])),
+                exam_year=self._first_non_empty(row, ["examYear", "year"]),
+                half_year=self._first_non_empty(
+                    row,
+                    ["thePastOrNextHalfYearName", "thePastOrNextHalfYear", "halfYear", "termHalf"],
+                ),
+                subject=self._first_non_empty(row, ["writtenExaminationSubject", "subject", "examSubject"]),
+                exam_time=self._first_non_empty(row, ["writtenExaminationTime", "examTime", "time"]),
+                written_exam_number=self._first_non_empty(
+                    row, ["writtenExaminationNumber", "examNumber", "ticketNumber"]
+                ),
+                apply_campus=self._first_non_empty(
+                    row, ["writtenExaminationApplyCampus", "applyCampus", "campus"]
+                ),
+                missing_test=self._as_bool_cn(
+                    self._first_non_empty(row, ["whetherMissingTest", "missingTest"])
+                ),
+                violation=self._as_bool_cn(self._first_non_empty(row, ["whetherViolation", "violation"])),
+                hearing_score=self._as_int(self._first_non_empty(row, ["hearingScore", "listeningScore"])),
+                reading_score=self._as_int(self._first_non_empty(row, ["readingScore"])),
+                writing_score=self._as_int(self._first_non_empty(row, ["writingScore"])),
+                oral_score=self._first_non_empty(row, ["oralExamAchievement", "oralScore"]),
+                raw_source=row if include_raw else None,
+            )
+            for row in matched_rows
+        ]
+
+        return CetScoresResponse(
+            level=4 if level == 4 else 6,
+            stale=False,
+            source="live",
+            total_records=len(rows),
+            matched_records=len(matched_rows),
+            entries=entries,
+        )
+
+    def _parse_empty_classroom_entries(
+        self,
+        *,
+        date_value: str,
+        campus_name: str,
+        section_start: int,
+        section_end: int,
+        rows: list[dict],
+        include_raw: bool,
+    ) -> list[EmptyClassroomEntry]:
+        entries: list[EmptyClassroomEntry] = []
+        normalized_campus = campus_name.strip()
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_campus = str(row.get("campus") or "").strip()
+            if normalized_campus and row_campus and row_campus != normalized_campus:
+                continue
+
+            available_sections: list[int] = []
+            for section_index, field_name in SECTION_FIELDS:
+                cell = row.get(field_name)
+                if not isinstance(cell, dict):
+                    available_sections.append(section_index)
+                    continue
+                occupy_reason = cell.get("occupyReason")
+                occupy_pro = cell.get("occupyPro")
+                if occupy_reason in {None, ""} and occupy_pro in {None, ""}:
+                    available_sections.append(section_index)
+
+            if not available_sections:
+                continue
+            required_sections = set(range(section_start, section_end + 1))
+            if not required_sections.issubset(set(available_sections)):
+                continue
+
+            available_periods = self._compress_sections(available_sections)
+            entries.append(
+                EmptyClassroomEntry(
+                    date=str(row.get("date") or date_value),
+                    campus=str(row.get("campus") or ""),
+                    building=row.get("teachingBuild"),
+                    classroom_name=str(row.get("classroomNum") or "").strip(),
+                    classroom_id=str(row.get("classroomID") or "") or None,
+                    available_sections=[str(item) for item in available_sections],
+                    available_periods=available_periods,
+                    raw_source=row if include_raw else None,
+                )
+            )
+
+        return sorted(
+            entries,
+            key=lambda entry: (
+                entry.building or "",
+                entry.classroom_name,
+            ),
+        )
+
+    def _compress_sections(self, sections: list[int]) -> list[str]:
+        if not sections:
+            return []
+        ordered = sorted(set(sections))
+        ranges: list[str] = []
+        start = ordered[0]
+        end = ordered[0]
+        for section in ordered[1:]:
+            if section == end + 1:
+                end = section
+                continue
+            ranges.append(f"{start}-{end}节" if start != end else f"{start}节")
+            start = section
+            end = section
+        ranges.append(f"{start}-{end}节" if start != end else f"{start}节")
+        return ranges
+
+    def _parse_section_range(self, section_range: str) -> tuple[int, int]:
+        value = str(section_range or "").strip()
+        match = re.fullmatch(r"(1[0-6]|[1-9])-(1[0-6]|[1-9])", value)
+        if not match:
+            raise InvalidQueryError(
+                f"section_range must use X-Y within 1-16, received {section_range}."
+            )
+        start = int(match.group(1))
+        end = int(match.group(2))
+        if start > end:
+            raise InvalidQueryError(
+                f"section_range start must be <= end, received {section_range}."
+            )
+        return start, end
 
     def _parse_timetable_entries(
         self,
@@ -584,43 +1071,57 @@ class JwxtClient:
                     term=term,
                     course_name=self._first_non_empty(
                         row,
-                        ["courseName", "course_name", "kcName", "kcmc"],
+                        ["scoCourseName", "courseName", "course_name", "kcName", "kcmc"],
                     ),
                     course_code=self._first_non_empty(
                         row,
-                        ["courseNo", "courseCode", "kch"],
+                        ["scoCourseNumber", "courseNo", "courseCode", "kch"],
                     ),
                     course_type=self._first_non_empty(
                         row,
-                        ["courseAttributeName", "courseType", "kclb"],
+                        [
+                            "scoCourseCategoryName",
+                            "scoCourseType",
+                            "scoCourseTypeName",
+                            "scoCourseNature",
+                            "scoCourseNatureName",
+                            "courseAttributeName",
+                            "courseType",
+                            "courseTypeName",
+                            "kclb",
+                        ],
                     ),
                     credit=self._as_float(
                         self._first_non_empty(
                             row,
-                            ["credit", "courseCredit", "xf"],
+                            ["scoCredit", "credit", "courseCredit", "xf"],
                         )
                     ),
                     score=self._first_non_empty(
                         row,
-                        ["score", "scoreValue", "achievement", "cj"],
+                        ["scoFinalScore", "score", "scoreValue", "achievement", "cj"],
                     ),
                     grade_point=self._as_float(
                         self._first_non_empty(
                             row,
-                            ["gradePoint", "grade_point", "point", "jd"],
+                            ["scoPoint", "gradePoint", "grade_point", "point", "jd"],
                         )
+                    ),
+                    rank=self._first_non_empty(
+                        row,
+                        ["teachClassRank", "scoRank", "rank", "ranking", "pm"],
                     ),
                     exam_nature=self._first_non_empty(
                         row,
-                        ["examNature", "examType", "ksxz"],
+                        ["examNature", "examType", "ksxz", "scoExamNature", "scoExamNatureName"],
                     ),
                     assessment_method=self._first_non_empty(
                         row,
-                        ["assessmentMethod", "assessmentType", "khfs"],
+                        ["assessmentMethod", "assessmentType", "khfs", "scoAssessType", "scoAssessTypeName"],
                     ),
                     score_flag=self._first_non_empty(
                         row,
-                        ["scoreFlag", "scoreSign", "cjbz"],
+                        ["scoreFlag", "scoreSign", "cjbz", "scoScoreFlag", "scoScoreSign"],
                     ),
                     raw_source=row if include_raw else None,
                 )
@@ -651,6 +1152,7 @@ class JwxtClient:
 
         return TimetableResponse(
             term=timetable.term,
+            week=timetable.week,
             stale=timetable.stale,
             source=timetable.source,
             entries=entries,
@@ -706,6 +1208,95 @@ class JwxtClient:
             raw_records=None,
         )
 
+    def _to_agent_empty_classrooms(
+        self,
+        classrooms: EmptyClassroomsResponse,
+        *,
+        include_raw: bool,
+    ) -> EmptyClassroomsResponse:
+        if include_raw:
+            return classrooms
+
+        entries = []
+        for entry in classrooms.entries:
+            cleaned = entry.model_copy(deep=True)
+            cleaned.raw_source = None
+            entries.append(cleaned)
+
+        return EmptyClassroomsResponse(
+            date=classrooms.date,
+            campus=classrooms.campus,
+            campus_id=classrooms.campus_id,
+            section_range=classrooms.section_range,
+            stale=classrooms.stale,
+            source=classrooms.source,
+            entries=entries,
+            raw_records=None,
+        )
+
+    def _extract_page_rows(self, payload: dict) -> list[dict]:
+        data = payload.get("data")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            rows = data.get("rows")
+            if isinstance(rows, list):
+                return [item for item in rows if isinstance(item, dict)]
+            nested = data.get("data")
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+        return []
+
+    def _detect_cet_level(self, row: dict) -> int | None:
+        if not isinstance(row, dict):
+            return None
+
+        def parse_level(text: str) -> int | None:
+            normalized = text.lower().replace(" ", "")
+            if any(token in normalized for token in ("cet-6", "cet6", "六级", "6级", "六")):
+                return 6
+            if any(token in normalized for token in ("cet-4", "cet4", "四级", "4级", "四")):
+                return 4
+            if normalized in {"6", "4"}:
+                return int(normalized)
+            return None
+
+        preferred_keys = [
+            "ksdj",
+            "dengji",
+            "level",
+            "gradeLevel",
+            "examLevel",
+            "cetLevel",
+            "testLevel",
+            "gradeType",
+            "examType",
+            "kslx",
+            "subjectName",
+            "examName",
+            "gradeName",
+            "projectName",
+            "kmmc",
+        ]
+
+        for key in preferred_keys:
+            for row_key, row_value in row.items():
+                if row_key == key or row_key.lower() == key.lower():
+                    if row_value not in {None, ""}:
+                        level = parse_level(str(row_value))
+                        if level is not None:
+                            return level
+
+        for row_key, row_value in row.items():
+            if row_value in {None, ""}:
+                continue
+            lower_key = row_key.lower()
+            if any(token in lower_key for token in ("level", "grade", "type", "name", "cet", "dj", "ks")):
+                level = parse_level(str(row_value))
+                if level is not None:
+                    return level
+        return None
+
     def _first_non_empty(self, payload: dict, keys: list[str]) -> str | None:
         for key in keys:
             value = payload.get(key)
@@ -721,3 +1312,21 @@ class JwxtClient:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _as_int(self, value: str | None) -> int | None:
+        if value in {None, ""}:
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _as_bool_cn(self, value: str | None) -> bool | None:
+        if value in {None, ""}:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized in {"是", "yes", "true", "1"}:
+            return True
+        if normalized in {"否", "no", "false", "0"}:
+            return False
+        return None

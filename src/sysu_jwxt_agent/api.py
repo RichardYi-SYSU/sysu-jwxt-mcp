@@ -1,6 +1,11 @@
+from datetime import date
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from sysu_jwxt_agent.schemas import (
+    CetScoresResponse,
+    EmptyClassroomsResponse,
     ExamsResponse,
     GradesResponse,
     HealthResponse,
@@ -20,6 +25,7 @@ from sysu_jwxt_agent.services.jwxt import (
 
 def build_router(jwxt_client: JwxtClient, auth_service, keepalive_service=None) -> APIRouter:
     router = APIRouter()
+    exam_week_type_values = Literal["缓补考", "10-17周结课考", "18-19周期末考"]
 
     def get_client() -> JwxtClient:
         return jwxt_client
@@ -67,11 +73,12 @@ def build_router(jwxt_client: JwxtClient, auth_service, keepalive_service=None) 
     @router.get("/timetable", response_model=TimetableResponse, response_model_exclude_none=True)
     def get_timetable(
         term: str = Query(default="current"),
+        week: int | None = Query(default=None, ge=1),
         include_raw: bool = Query(default=False),
         client: JwxtClient = Depends(get_client),
     ) -> TimetableResponse:
         try:
-            return client.get_timetable(term=term, include_raw=include_raw)
+            return client.get_timetable(term=term, week=week, include_raw=include_raw)
         except AuthenticationRequiredError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -93,11 +100,17 @@ def build_router(jwxt_client: JwxtClient, auth_service, keepalive_service=None) 
     def get_exams(
         term: str = Query(default="current"),
         exam_week_id: str | None = Query(default=None),
+        exam_week_type: exam_week_type_values | None = Query(default=None),
         include_raw: bool = Query(default=False),
         client: JwxtClient = Depends(get_client),
     ) -> ExamsResponse:
         try:
-            return client.get_exams(term=term, exam_week_id=exam_week_id, include_raw=include_raw)
+            return client.get_exams(
+                term=term,
+                exam_week_id=exam_week_id,
+                exam_week_type=exam_week_type,
+                include_raw=include_raw,
+            )
         except AuthenticationRequiredError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -136,6 +149,79 @@ def build_router(jwxt_client: JwxtClient, auth_service, keepalive_service=None) 
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
                     "code": "unauthenticated",
+                    "message": str(exc),
+                },
+            ) from exc
+        except UpstreamNotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail={
+                    "code": "upstream_not_implemented",
+                    "message": str(exc),
+                },
+            ) from exc
+
+    @router.get("/classrooms/empty", response_model=EmptyClassroomsResponse, response_model_exclude_none=True)
+    def get_empty_classrooms(
+        date_value: date = Query(alias="date"),
+        campus: str = Query(min_length=1),
+        section_range: str = Query(min_length=3),
+        include_raw: bool = Query(default=False),
+        client: JwxtClient = Depends(get_client),
+    ) -> EmptyClassroomsResponse:
+        try:
+            return client.get_empty_classrooms(
+                date_value=date_value.isoformat(),
+                campus=campus,
+                section_range=section_range,
+                include_raw=include_raw,
+            )
+        except AuthenticationRequiredError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "unauthenticated",
+                    "message": str(exc),
+                },
+            ) from exc
+        except InvalidQueryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "invalid_query",
+                    "message": str(exc),
+                },
+            ) from exc
+        except UpstreamNotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail={
+                    "code": "upstream_not_implemented",
+                    "message": str(exc),
+                },
+            ) from exc
+
+    @router.get("/cet-scores", response_model=CetScoresResponse, response_model_exclude_none=True)
+    def get_cet_scores(
+        level: Literal["4", "6"] = Query(...),
+        include_raw: bool = Query(default=False),
+        client: JwxtClient = Depends(get_client),
+    ) -> CetScoresResponse:
+        try:
+            return client.get_cet_scores(level=int(level), include_raw=include_raw)
+        except AuthenticationRequiredError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "unauthenticated",
+                    "message": str(exc),
+                },
+            ) from exc
+        except InvalidQueryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "invalid_query",
                     "message": str(exc),
                 },
             ) from exc

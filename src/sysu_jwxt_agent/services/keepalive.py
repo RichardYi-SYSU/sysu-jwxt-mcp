@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import random
 import threading
-import time
 from datetime import datetime, timezone
 
 from sysu_jwxt_agent.schemas import KeepaliveStatus
@@ -9,9 +9,15 @@ from sysu_jwxt_agent.services.auth import AuthService
 
 
 class SessionKeepaliveService:
-    def __init__(self, auth_service: AuthService, interval_seconds: int = 120) -> None:
+    def __init__(
+        self,
+        auth_service: AuthService,
+        interval_seconds: int = 300,
+        jitter_seconds: int = 20,
+    ) -> None:
         self._auth_service = auth_service
-        self._interval_seconds = interval_seconds
+        self._interval_seconds = max(1, interval_seconds)
+        self._jitter_seconds = max(0, jitter_seconds)
         self._enabled = True
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -19,6 +25,8 @@ class SessionKeepaliveService:
         self._last_ok: bool | None = None
         self._last_checked_at: str | None = None
         self._last_error: str | None = None
+        self._tick_count = 0
+        self._consecutive_failures = 0
 
     def start(self) -> KeepaliveStatus:
         with self._lock:
@@ -49,29 +57,51 @@ class SessionKeepaliveService:
             authenticated = self._auth_service.is_authenticated()
         except Exception:  # pragma: no cover - live network failures
             authenticated = None
+        with self._lock:
+            last_ok = self._last_ok
+            last_checked_at = self._last_checked_at
+            last_error = self._last_error
+            tick_count = self._tick_count
+            consecutive_failures = self._consecutive_failures
         return KeepaliveStatus(
             enabled=self._enabled,
             interval_seconds=self._interval_seconds,
+            jitter_seconds=self._jitter_seconds,
             running=running,
             authenticated=authenticated,
-            last_ok=self._last_ok,
-            last_checked_at=self._last_checked_at,
-            last_error=self._last_error,
+            last_ok=last_ok,
+            last_checked_at=last_checked_at,
+            last_error=last_error,
+            tick_count=tick_count,
+            consecutive_failures=consecutive_failures,
         )
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
             self._tick()
-            self._stop_event.wait(self._interval_seconds)
+            self._stop_event.wait(self._next_wait_seconds())
+
+    def _next_wait_seconds(self) -> float:
+        if self._jitter_seconds <= 0:
+            return float(self._interval_seconds)
+        delta = random.uniform(-self._jitter_seconds, self._jitter_seconds)
+        return max(1.0, float(self._interval_seconds) + delta)
 
     def _tick(self) -> None:
         now = datetime.now(timezone.utc).isoformat()
         try:
             ok = self._auth_service.keepalive_probe()
-            self._last_ok = ok
-            self._last_error = None if ok else "keepalive_probe returned false"
+            error = None if ok else "keepalive_probe returned false"
         except Exception as exc:  # pragma: no cover - defensive for live runtime
-            self._last_ok = False
-            self._last_error = str(exc)
-        self._last_checked_at = now
-        time.sleep(0.01)
+            ok = False
+            error = str(exc)
+
+        with self._lock:
+            self._tick_count += 1
+            self._last_ok = ok
+            self._last_error = error
+            self._last_checked_at = now
+            if ok:
+                self._consecutive_failures = 0
+            else:
+                self._consecutive_failures += 1

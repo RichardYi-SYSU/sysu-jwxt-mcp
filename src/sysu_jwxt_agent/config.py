@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     state_dir: Path = Path("data/state")
     cache_dir: Path = Path("data/cache")
     timeout_seconds: float = 20.0
+    keepalive_interval_seconds: int = 300
+    keepalive_jitter_seconds: int = 20
 
 
 settings = Settings()

@@ -18,7 +18,11 @@ def create_app() -> FastAPI:
         )
     )
     auth_service = AuthService(settings.state_dir, browser_manager=browser_manager)
-    keepalive_service = SessionKeepaliveService(auth_service=auth_service, interval_seconds=120)
+    keepalive_service = SessionKeepaliveService(
+        auth_service=auth_service,
+        interval_seconds=settings.keepalive_interval_seconds,
+        jitter_seconds=settings.keepalive_jitter_seconds,
+    )
     cache = TimetableCache(settings.cache_dir)
     jwxt_client = JwxtClient(
         auth_service=auth_service,
