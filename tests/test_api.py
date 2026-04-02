@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from sysu_jwxt_agent.main import create_app
-from sysu_jwxt_agent.schemas import ExamsResponse, TimetableResponse
+from sysu_jwxt_agent.schemas import ExamsResponse, GradesResponse, TimetableResponse
 
 
 def test_health() -> None:
@@ -248,3 +248,68 @@ def test_exams_can_include_raw_when_requested() -> None:
     assert response.status_code == 200
     assert response.json()["raw_records"] == [{"timetable": {}}]
     assert response.json()["entries"][0]["raw_source"]["cell"]["examSubjectName"] == "操作系统原理"
+
+
+def test_grades_returns_live_payload_when_authenticated() -> None:
+    client = TestClient(create_app())
+    grades = GradesResponse(
+        term="2025-2",
+        stale=False,
+        source="live",
+        entries=[
+            {
+                "term": "2025-2",
+                "course_name": "操作系统原理",
+                "course_code": "CS2001",
+                "credit": 3.0,
+                "score": "92",
+                "grade_point": 4.0,
+                "raw_source": {"score": "92"},
+            }
+        ],
+        summary={"passed": 1},
+        distribution=[{"name": "90-100", "value": 1}],
+        raw_records=[{"courseName": "操作系统原理"}],
+    )
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch("sysu_jwxt_agent.services.jwxt.JwxtClient._fetch_live_grades", return_value=grades),
+    ):
+        response = client.get("/grades")
+
+    assert response.status_code == 200
+    assert response.json()["term"] == "2025-2"
+    assert response.json()["entries"][0]["course_name"] == "操作系统原理"
+    assert "raw_source" not in response.json()["entries"][0]
+    assert "raw_records" not in response.json()
+
+
+def test_grades_can_include_raw_when_requested() -> None:
+    client = TestClient(create_app())
+    grades = GradesResponse(
+        term="2025-2",
+        stale=False,
+        source="live",
+        entries=[
+            {
+                "term": "2025-2",
+                "course_name": "操作系统原理",
+                "score": "92",
+                "raw_source": {"score": "92"},
+            }
+        ],
+        summary={},
+        distribution=[],
+        raw_records=[{"courseName": "操作系统原理"}],
+    )
+
+    with (
+        patch("sysu_jwxt_agent.services.auth.AuthService.is_authenticated", return_value=True),
+        patch("sysu_jwxt_agent.services.jwxt.JwxtClient._fetch_live_grades", return_value=grades),
+    ):
+        response = client.get("/grades", params={"include_raw": "true"})
+
+    assert response.status_code == 200
+    assert response.json()["entries"][0]["raw_source"]["score"] == "92"
+    assert response.json()["raw_records"] == [{"courseName": "操作系统原理"}]

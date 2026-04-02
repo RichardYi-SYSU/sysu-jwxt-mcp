@@ -91,3 +91,27 @@ class ExamsResponse(BaseModel):
     exam_weeks: list[ExamWeek] = Field(default_factory=list)
     entries: list[ExamEntry] = Field(default_factory=list)
     raw_records: list[dict] | None = None
+
+
+class GradeEntry(BaseModel):
+    term: str
+    course_name: str | None = None
+    course_code: str | None = None
+    course_type: str | None = None
+    credit: float | None = None
+    score: str | None = None
+    grade_point: float | None = None
+    exam_nature: str | None = None
+    assessment_method: str | None = None
+    score_flag: str | None = None
+    raw_source: dict | None = None
+
+
+class GradesResponse(BaseModel):
+    term: str
+    stale: bool = False
+    source: Literal["live", "cache"]
+    entries: list[GradeEntry] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
+    distribution: list[dict] = Field(default_factory=list)
+    raw_records: list[dict] | None = None

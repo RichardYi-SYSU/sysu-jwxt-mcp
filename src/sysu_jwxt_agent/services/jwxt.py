@@ -8,6 +8,8 @@ from sysu_jwxt_agent.schemas import (
     ExamEntry,
     ExamsResponse,
     ExamWeek,
+    GradeEntry,
+    GradesResponse,
     TimetableEntry,
     TimetableResponse,
 )
@@ -75,6 +77,13 @@ class JwxtClient:
 
         exams = self._fetch_live_exams(term=term, exam_week_id=exam_week_id, include_raw=include_raw)
         return self._to_agent_exams(exams, include_raw=include_raw)
+
+    def get_grades(self, term: str, include_raw: bool = False) -> GradesResponse:
+        if not self._auth_service.is_authenticated():
+            raise AuthenticationRequiredError("No authenticated session is available.")
+
+        grades = self._fetch_live_grades(term=term, include_raw=include_raw)
+        return self._to_agent_grades(grades, include_raw=include_raw)
 
     def _fetch_live_timetable(self, term: str, include_raw: bool) -> TimetableResponse:
         with sync_playwright() as playwright:
@@ -287,6 +296,100 @@ class JwxtClient:
             raw_records=raw_records if include_raw else None,
         )
 
+    def _fetch_live_grades(self, term: str, include_raw: bool) -> GradesResponse:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                storage_state=str(self._browser_manager.storage_state_path)
+            )
+            page = context.new_page()
+            page.goto(f"{settings.base_url}/#/student", wait_until="networkidle", timeout=30000)
+
+            payload = page.evaluate(
+                """async ({ baseUrl, requestedTerm }) => {
+                    const mkHeaders = () => ({
+                      'X-Requested-With': 'XMLHttpRequest',
+                      'Accept': 'application/json, text/plain, */*',
+                      'moduleid': 'null',
+                      'menuid': 'null',
+                      'lastaccesstime': String(Date.now())
+                    });
+                    const doFetch = async (url) => {
+                      const resp = await fetch(url, {
+                        credentials: 'include',
+                        headers: mkHeaders()
+                      });
+                      const text = await resp.text();
+                      return { status: resp.status, text };
+                    };
+
+                    const academic = await doFetch(`${baseUrl}/base-info/acadyearterm/showNewAcadlist?_t=${Date.now()}`);
+                    const academicJson = JSON.parse(academic.text);
+                    const academicYear = requestedTerm === 'current'
+                      ? academicJson.data.acadYearSemester
+                      : requestedTerm;
+
+                    const listV2 = await doFetch(`${baseUrl}/achievement-manage/score-check/listV2?semester=${encodeURIComponent(academicYear)}&_t=${Date.now()}`);
+                    const creditSituation = await doFetch(`${baseUrl}/achievement-manage/score-check/credit-situation?_t=${Date.now()}`);
+                    const pie = await doFetch(`${baseUrl}/achievement-manage/score-check/getPicPie?_t=${Date.now()}`);
+
+                    return {
+                      academicYear,
+                      listV2,
+                      creditSituation,
+                      pie
+                    };
+                }""",
+                {"baseUrl": settings.base_url, "requestedTerm": term},
+            )
+            browser.close()
+
+        if payload["listV2"]["status"] != 200:
+            raise UpstreamNotImplementedError(
+                f"Grades endpoint returned unexpected status {payload['listV2']['status']}."
+            )
+        if payload["creditSituation"]["status"] != 200:
+            raise UpstreamNotImplementedError(
+                "Grades summary endpoint returned unexpected status "
+                f"{payload['creditSituation']['status']}."
+            )
+        if payload["pie"]["status"] != 200:
+            raise UpstreamNotImplementedError(
+                f"Grades distribution endpoint returned unexpected status {payload['pie']['status']}."
+            )
+
+        list_json = json.loads(payload["listV2"]["text"])
+        credit_json = json.loads(payload["creditSituation"]["text"])
+        pie_json = json.loads(payload["pie"]["text"])
+
+        rows = list_json.get("data", [])
+        if not isinstance(rows, list):
+            rows = []
+
+        entries = self._parse_grade_entries(
+            term=payload["academicYear"],
+            rows=rows,
+            include_raw=include_raw,
+        )
+
+        summary = credit_json.get("data", {})
+        if not isinstance(summary, dict):
+            summary = {}
+
+        distribution = pie_json.get("data", [])
+        if not isinstance(distribution, list):
+            distribution = []
+
+        return GradesResponse(
+            term=payload["academicYear"],
+            stale=False,
+            source="live",
+            entries=entries,
+            summary=summary,
+            distribution=distribution,
+            raw_records=rows if include_raw else None,
+        )
+
     def _parse_timetable_entries(
         self,
         *,
@@ -464,6 +567,73 @@ class JwxtClient:
             ),
         )
 
+    def _parse_grade_entries(
+        self,
+        *,
+        term: str,
+        rows: list[dict],
+        include_raw: bool,
+    ) -> list[GradeEntry]:
+        entries: list[GradeEntry] = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            entries.append(
+                GradeEntry(
+                    term=term,
+                    course_name=self._first_non_empty(
+                        row,
+                        ["courseName", "course_name", "kcName", "kcmc"],
+                    ),
+                    course_code=self._first_non_empty(
+                        row,
+                        ["courseNo", "courseCode", "kch"],
+                    ),
+                    course_type=self._first_non_empty(
+                        row,
+                        ["courseAttributeName", "courseType", "kclb"],
+                    ),
+                    credit=self._as_float(
+                        self._first_non_empty(
+                            row,
+                            ["credit", "courseCredit", "xf"],
+                        )
+                    ),
+                    score=self._first_non_empty(
+                        row,
+                        ["score", "scoreValue", "achievement", "cj"],
+                    ),
+                    grade_point=self._as_float(
+                        self._first_non_empty(
+                            row,
+                            ["gradePoint", "grade_point", "point", "jd"],
+                        )
+                    ),
+                    exam_nature=self._first_non_empty(
+                        row,
+                        ["examNature", "examType", "ksxz"],
+                    ),
+                    assessment_method=self._first_non_empty(
+                        row,
+                        ["assessmentMethod", "assessmentType", "khfs"],
+                    ),
+                    score_flag=self._first_non_empty(
+                        row,
+                        ["scoreFlag", "scoreSign", "cjbz"],
+                    ),
+                    raw_source=row if include_raw else None,
+                )
+            )
+
+        return sorted(
+            entries,
+            key=lambda entry: (
+                entry.course_name or "",
+                entry.course_code or "",
+            ),
+        )
+
     def _to_agent_timetable(
         self,
         timetable: TimetableResponse,
@@ -510,3 +680,44 @@ class JwxtClient:
             entries=entries,
             raw_records=None,
         )
+
+    def _to_agent_grades(
+        self,
+        grades: GradesResponse,
+        *,
+        include_raw: bool,
+    ) -> GradesResponse:
+        if include_raw:
+            return grades
+
+        entries = []
+        for entry in grades.entries:
+            cleaned = entry.model_copy(deep=True)
+            cleaned.raw_source = None
+            entries.append(cleaned)
+
+        return GradesResponse(
+            term=grades.term,
+            stale=grades.stale,
+            source=grades.source,
+            entries=entries,
+            summary=grades.summary,
+            distribution=grades.distribution,
+            raw_records=None,
+        )
+
+    def _first_non_empty(self, payload: dict, keys: list[str]) -> str | None:
+        for key in keys:
+            value = payload.get(key)
+            if value in {None, ""}:
+                continue
+            return str(value)
+        return None
+
+    def _as_float(self, value: str | None) -> float | None:
+        if value in {None, ""}:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None

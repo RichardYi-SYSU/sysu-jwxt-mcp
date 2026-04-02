@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from sysu_jwxt_agent.schemas import (
     ExamsResponse,
+    GradesResponse,
     HealthResponse,
     ImportStateRequest,
     ImportStateResponse,
@@ -85,6 +86,31 @@ def build_router(jwxt_client: JwxtClient, auth_service) -> APIRouter:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "code": "invalid_query",
+                    "message": str(exc),
+                },
+            ) from exc
+        except UpstreamNotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail={
+                    "code": "upstream_not_implemented",
+                    "message": str(exc),
+                },
+            ) from exc
+
+    @router.get("/grades", response_model=GradesResponse, response_model_exclude_none=True)
+    def get_grades(
+        term: str = Query(default="current"),
+        include_raw: bool = Query(default=False),
+        client: JwxtClient = Depends(get_client),
+    ) -> GradesResponse:
+        try:
+            return client.get_grades(term=term, include_raw=include_raw)
+        except AuthenticationRequiredError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "unauthenticated",
                     "message": str(exc),
                 },
             ) from exc
