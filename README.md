@@ -24,13 +24,15 @@ That starts the local MCP server from the project root.
 
 ## MCP Server Configuration
 
-Use the same local command everywhere:
+Use the same local command everywhere (avoid `bash -lc`; some IDEs treat shell startup noise as MCP failure):
 
 ```bash
-bash -lc 'cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp'
+/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp
 ```
 
-Replace `/path/to/sysu-jwxt-agent` with your local checkout path.
+Replace `/path/to/sysu-jwxt-mcp` with your local checkout path.
+
+If you prefer `uv run`, make sure dependencies are already synced first; otherwise `uv` may try to resolve packages online during IDE startup.
 
 ### Codex
 
@@ -38,8 +40,7 @@ Add this to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.sysu-jwxt]
-command = "bash"
-args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+command = "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp"
 ```
 
 ### Claude Code
@@ -50,8 +51,7 @@ Create a project-level `.mcp.json`:
 {
   "mcpServers": {
     "sysu-jwxt": {
-      "command": "bash",
-      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+      "command": "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp"
     }
   }
 }
@@ -65,8 +65,7 @@ Add this to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "sysu-jwxt": {
-      "command": "bash",
-      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+      "command": "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp"
     }
   }
 }
@@ -81,13 +80,50 @@ Add this to `~/.copilot/mcp-config.json`:
   "mcpServers": {
     "sysu-jwxt": {
       "type": "stdio",
-      "command": "bash",
-      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"],
+      "command": "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp",
       "tools": ["*"]
     }
   }
 }
 ```
+
+### Tool discovery troubleshooting
+
+If the IDE cannot see tools, verify these first:
+
+1. Run one-time environment setup in the repo root:
+
+   ```bash
+   uv sync
+   uv run playwright install chromium
+   ```
+
+2. Verify MCP tool discovery through stdio:
+
+   ```bash
+   python - <<'PY'
+   import asyncio
+   from mcp.client.session import ClientSession
+   from mcp.client.stdio import stdio_client, StdioServerParameters
+
+   async def main():
+       server = StdioServerParameters(
+           command="/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp",
+       )
+       async with stdio_client(server) as (r, w):
+           async with ClientSession(r, w) as session:
+               await session.initialize()
+               tools = await session.list_tools()
+               print([tool.name for tool in tools.tools])
+
+   asyncio.run(main())
+   PY
+   ```
+
+3. If initialization still fails, check for:
+   - stale path (`/path/to/...` not replaced),
+   - missing dependencies (run `uv sync` again),
+   - shell wrappers that print to stdio before MCP starts.
 
 ## First Run
 
