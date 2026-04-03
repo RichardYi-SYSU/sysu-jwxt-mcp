@@ -1,15 +1,79 @@
 # MCP Integration
 
-## Summary
+This repository ships a local `stdio` MCP server on top of the same JWXT services used by the compatibility REST API.
 
-This repository now exposes a local `stdio` MCP server on top of the same JWXT services used by the REST API.
+## Run the Server
 
-- Transport: `stdio`
-- Server entrypoint: `sysu-jwxt-mcp`
-- Implementation: `src/sysu_jwxt_agent/mcp_server.py`
-- Shared runtime bootstrap: `src/sysu_jwxt_agent/bootstrap.py`
+```bash
+uv sync
+uv run playwright install chromium
+uv run sysu-jwxt-mcp
+```
 
-The MCP layer does not self-call the REST API. It reuses `AuthService`, `JwxtClient`, and `SessionKeepaliveService` directly.
+## Recommended Client Configurations
+
+All examples below use the same local command:
+
+```bash
+bash -lc 'cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp'
+```
+
+### Codex
+
+`~/.codex/config.toml`
+
+```toml
+[mcp_servers.sysu-jwxt]
+command = "bash"
+args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+```
+
+### Claude Code
+
+`.mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "sysu-jwxt": {
+      "command": "bash",
+      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+    }
+  }
+}
+```
+
+### Cursor
+
+`~/.cursor/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "sysu-jwxt": {
+      "command": "bash",
+      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+    }
+  }
+}
+```
+
+### GitHub Copilot CLI
+
+`~/.copilot/mcp-config.json`
+
+```json
+{
+  "mcpServers": {
+    "sysu-jwxt": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
 
 ## Available Tools
 
@@ -28,37 +92,47 @@ The MCP layer does not self-call the REST API. It reuses `AuthService`, `JwxtCli
 - `get_empty_classrooms`
 - `get_cet_scores`
 
-## Run Locally
+## Login Flow
 
-```bash
-source .venv/bin/activate
-sysu-jwxt-mcp
-```
+### Terminal clients
 
-Equivalent:
-
-```bash
-python -m sysu_jwxt_agent.mcp_server
-```
-
-## Recommended Login Flow
-
-1. In CLI-oriented clients such as Codex CLI, call `auth_qr_terminal`
-2. In structured clients, call `auth_qr_start` and render `qr_ascii` or show `qr_png_path`
+1. Call `auth_qr_terminal`
+2. Scan the ASCII QR code
 3. Poll `auth_qr_status`
-4. When `status=success`, `data/state/storage_state.json` is already persisted
-5. Then call query tools such as `get_grades` or `get_timetable`
+4. When `status=success`, call query tools
 
-Important:
+### GUI clients
 
-- The verified student QR flow depends on `pattern=student-login` in the JWXT CAS entry.
-- `auth_qr_start` hides `qr_image_base64` by default to keep stdio output compact.
-- `auth_qr_terminal` returns a single plain-text block so terminal MCP clients can display the QR directly.
-- MCP query tools run their blocking service calls in worker threads so `playwright.sync_api` does not execute inside the MCP event loop.
-- `get_empty_classrooms` expects canonical campus names such as `东校园`.
+1. Call `auth_qr_start`
+2. Render the returned QR image inline in the chat or app session
+3. Poll `auth_qr_status`
+4. When `status=success`, call query tools
 
-## Client Notes
+`qr_png_path` is a fallback field for debugging. GUI clients should not require users to open files from disk.
 
-- Claude Desktop / Claude Code / Codex local workflows: use `stdio`
-- OpenAI Agents SDK: first use `stdio`; add `streamable-http` in a later iteration if remote deployment is needed
-- GitHub Copilot CLI: use the local `stdio` server command
+## Verification
+
+After login, try one of:
+
+- `get_grades(term="2025-1")`
+- `get_timetable(term="2025-2", week=11)`
+- `get_exams(term="2025-2", exam_week_type="18-19周期末考")`
+- `get_empty_classrooms(date="2026-04-04", campus="东校园", section_range="1-4")`
+- `get_cet_scores(level=4)`
+
+## Common Errors
+
+- `qr_session_not_found`
+  The QR runtime lived in another MCP server process, or the session expired before polling.
+- `unauthenticated`
+  The login flow did not complete or the upstream session expired.
+- `Playwright Sync API inside the asyncio loop`
+  This is fixed in the MCP layer by dispatching blocking service calls to worker threads. Restart the MCP server after upgrading.
+- `invalid_query`
+  One of the query parameters does not match the strict JWXT adapter validation.
+
+## Notes
+
+- The verified student SSO path must use `pattern=student-login`.
+- The MCP layer calls the service layer directly; it does not self-call the REST API.
+- Blocking Playwright and HTTP work is dispatched off the MCP event loop so async MCP clients can call query tools safely.

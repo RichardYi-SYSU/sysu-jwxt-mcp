@@ -11,13 +11,13 @@ Capture the normal browser-authenticated path into `jwxt.sysu.edu.cn`, persist s
 1. Install Playwright browser binaries:
 
    ```bash
-   .venv/bin/playwright install chromium
+   uv run playwright install chromium
    ```
 
 2. Run the observation script in SSH-friendly headless mode:
 
    ```bash
-   .venv/bin/python scripts/observe_login.py
+   uv run python scripts/dev/observe_login.py
    ```
 
 3. Review the terminal output and generated artifacts:
@@ -49,7 +49,7 @@ Pure SSH headless mode can observe the redirect chain and login entry pages, but
 If you do have GUI access, you can still run a visible browser with:
 
 ```bash
-.venv/bin/python scripts/observe_login.py --headed
+uv run python scripts/dev/observe_login.py --headed
 ```
 
 ## What to Implement Next

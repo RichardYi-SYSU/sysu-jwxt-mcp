@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sysu-jwxt-agent"
 version = "0.1.0"
-description = "Local agent-facing service for reading authorized data from SYSU JWXT."
+description = "Local MCP server for reading authorized data from SYSU JWXT."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

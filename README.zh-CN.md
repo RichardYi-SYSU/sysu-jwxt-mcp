@@ -2,153 +2,187 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-一个本地服务与 Agent 接口层，用于在已授权学生会话下读取中大教务系统（`jwxt.sysu.edu.cn`）数据。
+一个本地 `stdio` MCP 服务，用于在已授权学生会话下读取中大教务系统 `jwxt.sysu.edu.cn` 的数据。
 
-当前仓库同时提供：
+当前仓库以本地 MCP server 为第一入口。REST API 仍然保留，但主要用于调试和兼容，不再是主使用路径。
 
-- 本地 REST API
-- 复用同一套 JWXT service 层的本地 `stdio` MCP 服务
+## Quick Start
 
-## 范围
+如果本机还没有安装 `uv`，先参考：
 
-- 仅读取当前登录用户本身有权限访问的数据。
-- `v1` 已支持：课表、考试、成绩、空教室、四六级成绩查询。
-- 鉴权沿用正常 `NetID/CAS` 登录流程。
-- 学生端二维码登录现已完成端到端验证，扫码确认后可自动落盘 `data/state/storage_state.json`。
-- 当自动化登录受限时，仍可退回 `import-state` 手动接管。
+- <https://docs.astral.sh/uv/getting-started/installation/>
 
-## 架构
-
-- 使用 `FastAPI` 对外提供本地 REST API，供 Agent 调用。
-- 使用 `Playwright` 处理浏览器态登录与会话复用。
-- 通过类型化客户端层屏蔽上游页面/API 细节。
-- 课表结果会做标准化并本地缓存，实时抓取失败时可回退缓存。
-- 提供保活 worker 周期探测会话有效性，降低短会话过期影响。
-
-## API
-
-- `GET /health`: 服务健康检查。
-- `POST /auth/login`: 启动或刷新登录流程。
-- `POST /auth/refresh`: 强制刷新会话状态。
-- `POST /auth/import-state`: 导入浏览器 storage state 或 cookie 列表。
-- `POST /auth/qr/start`: 创建扫码登录会话，并返回二维码载荷（`qr_ascii`、`qr_png_path`、`qr_image_base64`）。
-- `GET /auth/qr/status?login_session_id=...`: 轮询扫码状态，推进 CAS->JWXT SSO，并在成功后自动落盘 `storage_state.json`。
-- `POST /auth/qr/confirm?login_session_id=...`: 兼容接口；返回已落盘的结果并关闭内存中的扫码会话。
-- `GET /auth/keepalive/status`: 查看保活 worker 状态与计数器。
-- `POST /auth/keepalive/start|stop|ping`: 控制保活 worker。
-- `GET /timetable?term=current&week=11`: 查询指定学期/周课表（标准化输出）。
-- `GET /exams?term=2025-1&exam_week_type=18-19周期末考`: 查询考试信息。
-- `GET /grades?term=2025-1`: 查询成绩列表与汇总。
-- `GET /classrooms/empty?date=2026-04-03&campus=东校园&section_range=1-4`: 查询指定节次范围空教室。
-- `GET /cet-scores?level=4|6`: 查询四级/六级成绩。
-
-## MCP
-
-- 传输方式：本地 `stdio`
-- 启动入口：`sysu-jwxt-mcp`
-- tool 能力与当前鉴权/查询能力保持一致：
-  - `auth_refresh`
-  - `auth_qr_start|status|confirm`
-  - `auth_qr_terminal`
-  - `auth_keepalive_status|start|stop|ping`
-  - `get_timetable`
-  - `get_exams`
-  - `get_grades`
-  - `get_empty_classrooms`
-  - `get_cet_scores`
-
-使用方式与客户端接入说明见 `docs/mcp.md`。
-
-## 面向 Agent 的输出约定
-
-- 多数接口支持 `include_raw=true`，便于排障与上游字段演进。
-- `/classrooms/empty` 强制要求 `date`、`campus`、`section_range` 三个过滤条件，避免结果集过大。
-- `/cet-scores` 默认输出精简字段，便于规划和分析：
-  - `score`, `exam_year`, `half_year`, `subject`
-  - 分项成绩：`hearing_score`, `reading_score`, `writing_score`
-  - 状态字段：`missing_test`, `violation`
-
-## 扫码登录流程
-
-1. 调用 `POST /auth/qr/start`。
-2. 将返回的 `qr_ascii` 或 `qr_png_path` 展示给用户，用企业微信扫码并确认。
-3. 轮询 `GET /auth/qr/status`。
-4. 当状态为 `success` 时，`storage_state.json` 已经自动落盘。
-5. `POST /auth/qr/confirm` 仅作为可选兼容接口，用于显式关闭内存中的扫码会话。
-
-实现细节说明：
-
-- 当前已验证可用的学生扫码链路必须走 `pattern=student-login` 的 JWXT CAS 入口。若使用不带 `pattern` 的裸 `/api/sso/cas/login`，会停在 CAS 已确认但 JWXT 未真正登录的状态。
-
-## 开发
+然后执行：
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-playwright install chromium
-uvicorn sysu_jwxt_agent.main:app --reload
+uv sync
+uv run playwright install chromium
+uv run sysu-jwxt-mcp
 ```
 
-进行真实 JWXT 联调前，可运行：
+这会在当前项目目录启动本地 MCP 服务。
+
+## MCP Server Configuration
+
+统一使用下面这条本地启动命令：
 
 ```bash
-.venv/bin/python scripts/observe_login.py
+bash -lc 'cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp'
 ```
 
-脚本默认采用适合 SSH 的无头模式。仅当远端机器具备 GUI 时再使用 `--headed`。
+将 `/path/to/sysu-jwxt-agent` 替换成你本地仓库的实际路径。
 
-登录观测与产物分析流程见 `docs/login-observation.md`。  
-已验证的线上发现记录见 `docs/live-discovery.md`。  
-纯 SSH 场景推荐登录路径见 `docs/session-import.md`。
+### Codex
 
-会话监控小工具（默认每分钟记录一次）：
+在 `~/.codex/config.toml` 中加入：
 
-```bash
-.venv/bin/python scripts/session_validity_monitor.py
+```toml
+[mcp_servers.sysu-jwxt]
+command = "bash"
+args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
 ```
 
-常用参数示例：
+### Claude Code
 
-```bash
-.venv/bin/python scripts/session_validity_monitor.py --interval-seconds 60 --output data/monitor/session-validity.log
+在项目根目录创建 `.mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "sysu-jwxt": {
+      "command": "bash",
+      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+    }
+  }
+}
 ```
 
-终端扫码辅助脚本（优先输出 ASCII 二维码，并自动轮询直到 `storage_state.json` 落盘）：
+### Cursor
 
-```bash
-.venv/bin/python scripts/qr_login_cli.py
+在 `~/.cursor/mcp.json` 中加入：
+
+```json
+{
+  "mcpServers": {
+    "sysu-jwxt": {
+      "command": "bash",
+      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+    }
+  }
+}
 ```
 
-MCP 服务启动方式：
+### GitHub Copilot CLI
 
-```bash
-sysu-jwxt-mcp
+在 `~/.copilot/mcp-config.json` 中加入：
+
+```json
+{
+  "mcpServers": {
+    "sysu-jwxt": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"],
+      "tools": ["*"]
+    }
+  }
+}
 ```
 
-对于 Codex CLI 这类终端型 MCP 客户端，优先使用纯文本二维码工具：
+## 首次使用
+
+### 终端型客户端
+
+调用：
 
 ```text
-调用 auth_qr_terminal
+auth_qr_terminal
 ```
 
-实现说明：
+它会返回：
 
-- `auth_qr_terminal` 会返回一整段纯文本，其中包含 `login_session_id`、`qr_png_path` 和 ASCII 二维码。
-- MCP tools 会把阻塞型 service 调用派发到工作线程，避免在 MCP 的 asyncio 事件循环里直接运行同步版 Playwright。
+- `login_session_id`
+- 可扫码的 ASCII 二维码
+- 下一步轮询提示
 
-扫码成功后的快速验证命令：
+随后轮询：
+
+```text
+auth_qr_status(login_session_id="...")
+```
+
+### GUI 型客户端
+
+调用：
+
+```text
+auth_qr_start
+```
+
+对于 GUI 集成，二维码应直接在会话里展示，优先渲染返回的图像内容，而不是要求用户去目录里打开一个 PNG 文件。只有客户端确实不支持内联图片时，才退回文件路径。
+
+用同一个 `login_session_id` 轮询，直到 `status="success"`。
+
+### 验证登录后的查询
+
+扫码成功后，可直接调用：
+
+```text
+get_grades(term="2025-1")
+get_timetable(term="2025-2", week=11)
+get_exams(term="2025-2", exam_week_type="18-19周期末考")
+get_empty_classrooms(date="2026-04-04", campus="东校园", section_range="1-4")
+get_cet_scores(level=4)
+```
+
+## 核心 Tools
+
+- `auth_refresh`：检查当前会话是否仍有效。
+- `auth_qr_start`：面向 GUI 客户端的扫码登录入口。
+- `auth_qr_terminal`：面向纯终端客户端的扫码登录入口。
+- `auth_qr_status`：轮询登录状态，并在成功时自动落盘 `data/state/storage_state.json`。
+- `auth_keepalive_status|start|stop|ping`：查看和控制保活。
+- `get_timetable`：读取学期/周维度的标准化课表。
+- `get_exams`：读取考试周和考试安排。
+- `get_grades`：读取学期成绩、课程类型、绩点和排名。
+- `get_empty_classrooms`：读取指定日期、校区、节次范围的空教室。
+- `get_cet_scores`：读取四级或六级成绩。
+
+## 仓库结构
+
+- `src/sysu_jwxt_agent/`：MCP server、REST 兼容层和 JWXT service。
+- `scripts/cli/`：用户向辅助脚本。
+- `scripts/dev/`：逆向和探测脚本。
+- `docs/mcp.md`：MCP 使用说明和各客户端补充说明。
+- `docs/rest.md`：REST 兼容接口说明。
+- `docs/dev/`：登录观测和逆向笔记。
+
+## 进阶说明
+
+REST 仍可用于调试和兼容：
+
+- `uv run uvicorn sysu_jwxt_agent.main:app --reload`
+- 具体接口说明见 `docs/rest.md`
+
+用户向辅助脚本：
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8000/auth/refresh
-curl -sS 'http://127.0.0.1:8000/grades?term=2025-1'
-curl -sS 'http://127.0.0.1:8000/timetable?term=2025-2&week=11'
+uv run python scripts/cli/qr_login_cli.py
+uv run python scripts/cli/session_validity_monitor.py --interval-seconds 60
 ```
 
-## 说明
+开发与逆向文档：
 
-- 默认不会持久化保存账号密码。
-- 会话状态存放在 `data/` 目录，需按敏感数据处理。
-- 上游选择器与接口结构可能变化；解析逻辑倾向于“显式失败”，避免静默返回空数据。
-- 若上游返回结构异常，优先保留 `raw` 载荷并显式更新解析器。
-- `/classrooms/empty` 目前要求使用规范校区名，例如 `东校园`；`东校` 这类简称会被参数校验拒绝。
+- `docs/mcp.md`
+- `docs/rest.md`
+- `docs/dev/login-observation.md`
+- `docs/dev/live-discovery.md`
+- `docs/dev/session-import.md`
+- `docs/dev/implementation-plan.md`
+
+## 备注
+
+- `data/` 下的会话产物属于敏感信息。
+- 当前已验证可用的学生登录链路必须走 `pattern=student-login`。
+- 校区参数不接受 `东校` 这类简称，应使用 `东校园` 这类规范值。
+- MCP 中所有阻塞型 Playwright 调用都已移出事件循环，异步客户端可以安全调用查询工具。

@@ -42,7 +42,7 @@ On the remote machine:
 
 ```bash
 cd /home/yichw/sysu-jwxt-agent
-.venv/bin/python scripts/import_session.py --input jwxt-session.json
+uv run python scripts/dev/import_session.py --input jwxt-session.json
 ```
 
 Or via the local API:
