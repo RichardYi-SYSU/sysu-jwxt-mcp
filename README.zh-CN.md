@@ -4,6 +4,11 @@
 
 一个本地服务与 Agent 接口层，用于在已授权学生会话下读取中大教务系统（`jwxt.sysu.edu.cn`）数据。
 
+当前仓库同时提供：
+
+- 本地 REST API
+- 复用同一套 JWXT service 层的本地 `stdio` MCP 服务
+
 ## 范围
 
 - 仅读取当前登录用户本身有权限访问的数据。
@@ -36,6 +41,22 @@
 - `GET /grades?term=2025-1`: 查询成绩列表与汇总。
 - `GET /classrooms/empty?date=2026-04-03&campus=东校园&section_range=1-4`: 查询指定节次范围空教室。
 - `GET /cet-scores?level=4|6`: 查询四级/六级成绩。
+
+## MCP
+
+- 传输方式：本地 `stdio`
+- 启动入口：`sysu-jwxt-mcp`
+- tool 能力与当前鉴权/查询能力保持一致：
+  - `auth_refresh`
+  - `auth_qr_start|status|confirm`
+  - `auth_keepalive_status|start|stop|ping`
+  - `get_timetable`
+  - `get_exams`
+  - `get_grades`
+  - `get_empty_classrooms`
+  - `get_cet_scores`
+
+使用方式与客户端接入说明见 `docs/mcp.md`。
 
 ## 面向 Agent 的输出约定
 
@@ -96,6 +117,12 @@ uvicorn sysu_jwxt_agent.main:app --reload
 
 ```bash
 .venv/bin/python scripts/qr_login_cli.py
+```
+
+MCP 服务启动方式：
+
+```bash
+sysu-jwxt-mcp
 ```
 
 扫码成功后的快速验证命令：

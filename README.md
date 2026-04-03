@@ -4,6 +4,11 @@
 
 Local service and agent-facing tooling for reading data from the SYSU teaching affairs system (`jwxt.sysu.edu.cn`) using an authorized student session.
 
+This repository now ships both:
+
+- a local REST API
+- a local `stdio` MCP server that reuses the same JWXT service layer
+
 ## Scope
 
 - Only reads data the signed-in user is already allowed to access.
@@ -36,6 +41,22 @@ Local service and agent-facing tooling for reading data from the SYSU teaching a
 - `GET /grades?term=2025-1`: fetch grade list and summary.
 - `GET /classrooms/empty?date=2026-04-03&campus=东校园&section_range=1-4`: fetch empty classrooms for required section range.
 - `GET /cet-scores?level=4|6`: fetch CET-4/CET-6 scores.
+
+## MCP
+
+- Transport: local `stdio`
+- Entrypoint: `sysu-jwxt-mcp`
+- Tool surface mirrors the existing auth and query capabilities:
+  - `auth_refresh`
+  - `auth_qr_start|status|confirm`
+  - `auth_keepalive_status|start|stop|ping`
+  - `get_timetable`
+  - `get_exams`
+  - `get_grades`
+  - `get_empty_classrooms`
+  - `get_cet_scores`
+
+See `docs/mcp.md` for usage and client-integration notes.
 
 ## Agent-Facing Output Notes
 
@@ -96,6 +117,12 @@ QR login terminal helper (prints ASCII QR when available, then polls until `stor
 
 ```bash
 .venv/bin/python scripts/qr_login_cli.py
+```
+
+MCP server:
+
+```bash
+sysu-jwxt-mcp
 ```
 
 Quick verification after QR login succeeds:

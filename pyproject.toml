@@ -10,12 +10,16 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.116,<1.0",
+  "mcp>=1,<2",
   "pydantic>=2.11,<3.0",
   "pydantic-settings>=2.8,<3.0",
   "uvicorn[standard]>=0.35,<1.0",
   "playwright>=1.54,<2.0",
   "httpx>=0.28,<1.0",
 ]
+
+[project.scripts]
+sysu-jwxt-mcp = "sysu_jwxt_agent.mcp_server:main"
 
 [project.optional-dependencies]
 dev = [
@@ -30,4 +34,3 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

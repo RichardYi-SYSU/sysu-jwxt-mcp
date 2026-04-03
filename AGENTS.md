@@ -4,6 +4,8 @@
 
 This repository exists to give an agent a safe, local way to read teaching-affairs data from `jwxt.sysu.edu.cn` for one authorized user.
 
+It now exposes the same capabilities through both a REST API and a local `stdio` MCP server.
+
 ## Guardrails
 
 - Do not implement authentication bypasses or attempt to access data outside the signed-in user's scope.
@@ -27,6 +29,17 @@ This repository exists to give an agent a safe, local way to read teaching-affai
    - `GET /classrooms/empty`
    - `GET /cet-scores`
 6. If real-time fetch fails, inspect explicit error code (`unauthenticated`, `invalid_query`, `upstream_not_implemented`) before retrying.
+
+For MCP-based clients, use the mirrored tools instead of the REST endpoints:
+
+- `auth_refresh`
+- `auth_qr_start|status|confirm`
+- `auth_keepalive_status|start|stop|ping`
+- `get_timetable`
+- `get_exams`
+- `get_grades`
+- `get_empty_classrooms`
+- `get_cet_scores`
 
 ## Expected Next Steps
 

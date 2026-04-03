@@ -32,12 +32,17 @@ Build a local service that allows an agent to read key teaching-affairs data fro
    - Add structured logs with sensitive-field redaction.
    - Add smoke tests for health and parser behavior.
    - Add integration notes for turning REST endpoints into MCP tools later.
+6. MCP packaging
+   - Expose the existing auth and query capabilities as a local `stdio` MCP server.
+   - Reuse the same service layer as the REST API instead of self-calling HTTP.
+   - Keep the first version focused on tools; defer streamable HTTP to a later iteration.
 
 ## v1 Deliverables
 
 - A runnable local repository.
 - Project docs for agent usage and implementation boundaries.
 - A verified student QR login path that only requires the user to scan/confirm and does not require manual cookie export.
+- A runnable local `stdio` MCP server for the same single-user JWXT workflow.
 - Working service with agent-facing endpoints for:
   - timetable (`/timetable`)
   - exams (`/exams`)
