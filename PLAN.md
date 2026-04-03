@@ -20,6 +20,7 @@ Build a local service that allows an agent to read key teaching-affairs data fro
    - Playwright browser launcher.
    - Session persistence via storage state.
    - Session validation, keepalive worker, and explicit login status reporting.
+   - Student QR login via Enterprise WeCom scan, with automatic `storage_state.json` persistence after successful CAS->JWXT completion.
 3. Data extraction
    - Discover authenticated request paths for timetable, exams, grades, empty classrooms, and CET scores.
    - Implement response normalization and strict query validation.
@@ -36,6 +37,7 @@ Build a local service that allows an agent to read key teaching-affairs data fro
 
 - A runnable local repository.
 - Project docs for agent usage and implementation boundaries.
+- A verified student QR login path that only requires the user to scan/confirm and does not require manual cookie export.
 - Working service with agent-facing endpoints for:
   - timetable (`/timetable`)
   - exams (`/exams`)
@@ -50,3 +52,4 @@ Build a local service that allows an agent to read key teaching-affairs data fro
 - Multi-user session isolation.
 - Direct MCP server exposure.
 - Scheduled background sync.
+- Alias normalization for human-friendly classroom campus inputs such as `东校 -> 东校园`.

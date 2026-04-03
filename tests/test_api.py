@@ -2,7 +2,16 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from sysu_jwxt_agent.main import create_app
-from sysu_jwxt_agent.schemas import CetScoresResponse, EmptyClassroomsResponse, ExamsResponse, GradesResponse, TimetableResponse
+from sysu_jwxt_agent.schemas import (
+    CetScoresResponse,
+    EmptyClassroomsResponse,
+    ExamsResponse,
+    GradesResponse,
+    QrLoginConfirmResponse,
+    QrLoginStartResponse,
+    QrLoginStatusResponse,
+    TimetableResponse,
+)
 
 
 def test_health() -> None:
@@ -80,6 +89,132 @@ def test_import_state_writes_storage_state(tmp_path) -> None:
     assert result.imported is True
     assert result.cookie_count == 1
     assert auth.state_file.exists()
+
+
+def test_qr_login_start_route() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.auth.AuthService.start_qr_login") as mocked_start:
+        mocked_start.return_value = QrLoginStartResponse(
+            login_session_id="abc12345",
+            status="pending",
+            qr_image_base64="ZmFrZQ==",
+            qr_page_url="https://cas.sysu.edu.cn/esc-sso/login",
+            qr_png_path="data/state/qr-login/abc12345.png",
+            expires_at="2026-04-03T00:00:00+00:00",
+            message="ok",
+        )
+        response = client.post("/auth/qr/start")
+
+    assert response.status_code == 200
+    assert response.json()["login_session_id"] == "abc12345"
+    assert response.json()["status"] == "pending"
+    assert response.json()["qr_png_path"] == "data/state/qr-login/abc12345.png"
+
+
+def test_qr_login_start_returns_503_on_bootstrap_error() -> None:
+    client = TestClient(create_app())
+    from sysu_jwxt_agent.services.auth import QrLoginStartError
+
+    with patch(
+        "sysu_jwxt_agent.services.auth.AuthService.start_qr_login",
+        side_effect=QrLoginStartError("playwright failed"),
+    ):
+        response = client.post("/auth/qr/start")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "qr_start_failed"
+
+
+def test_qr_login_status_route() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.auth.AuthService.get_qr_login_status") as mocked_status:
+        mocked_status.return_value = QrLoginStatusResponse(
+            login_session_id="abc12345",
+            status="success",
+            authenticated=True,
+            expires_at="2026-04-03T00:00:00+00:00",
+            state_persisted=True,
+            state_path="data/state/storage_state.json",
+            cookie_count=3,
+            qr_png_path="data/state/qr-login/abc12345.png",
+            trace_path="data/state/qr-login/abc12345.trace.json",
+            message="persisted",
+        )
+        response = client.get("/auth/qr/status", params={"login_session_id": "abc12345"})
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+    assert response.json()["state_persisted"] is True
+    assert response.json()["cookie_count"] == 3
+
+
+def test_qr_login_status_404_for_unknown_session() -> None:
+    client = TestClient(create_app())
+    from sysu_jwxt_agent.services.auth import QrLoginSessionNotFoundError
+
+    with patch(
+        "sysu_jwxt_agent.services.auth.AuthService.get_qr_login_status",
+        side_effect=QrLoginSessionNotFoundError("not found"),
+    ):
+        response = client.get("/auth/qr/status", params={"login_session_id": "missing123"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "qr_session_not_found"
+
+
+def test_qr_login_confirm_route() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.auth.AuthService.confirm_qr_login") as mocked_confirm:
+        mocked_confirm.return_value = QrLoginConfirmResponse(
+            login_session_id="abc12345",
+            status="success",
+            authenticated=True,
+            imported=True,
+            cookie_count=3,
+            state_path="data/state/storage_state.json",
+            message="persisted",
+        )
+        response = client.post("/auth/qr/confirm", params={"login_session_id": "abc12345"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert response.json()["imported"] is True
+
+
+def test_qr_login_confirm_route_is_compatible_after_auto_persist() -> None:
+    client = TestClient(create_app())
+
+    with patch("sysu_jwxt_agent.services.auth.AuthService.confirm_qr_login") as mocked_confirm:
+        mocked_confirm.return_value = QrLoginConfirmResponse(
+            login_session_id="abc12345",
+            status="success",
+            authenticated=True,
+            imported=True,
+            cookie_count=3,
+            state_path="data/state/storage_state.json",
+            message="already persisted",
+        )
+        response = client.post("/auth/qr/confirm", params={"login_session_id": "abc12345"})
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "already persisted"
+
+
+def test_qr_login_confirm_409_when_not_ready() -> None:
+    client = TestClient(create_app())
+    from sysu_jwxt_agent.services.auth import QrLoginNotReadyError
+
+    with patch(
+        "sysu_jwxt_agent.services.auth.AuthService.confirm_qr_login",
+        side_effect=QrLoginNotReadyError("not ready"),
+    ):
+        response = client.post("/auth/qr/confirm", params={"login_session_id": "abc12345"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "qr_login_not_ready"
 
 
 def test_timetable_returns_live_payload_when_authenticated() -> None:

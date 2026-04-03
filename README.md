@@ -8,7 +8,9 @@ Local service and agent-facing tooling for reading data from the SYSU teaching a
 
 - Only reads data the signed-in user is already allowed to access.
 - `v1` supports timetable, exams, grades, empty-classroom, and CET score queries.
-- Authentication is handled through normal `NetID/CAS` flows, with manual takeover allowed when automation cannot complete login.
+- Authentication is handled through normal `NetID/CAS` flows.
+- QR login is now verified end-to-end for the student flow and can persist `data/state/storage_state.json` automatically after scan/confirm.
+- Manual state import remains available as a fallback when automation cannot complete login.
 
 ## Architecture
 
@@ -24,6 +26,9 @@ Local service and agent-facing tooling for reading data from the SYSU teaching a
 - `POST /auth/login`: start or refresh login flow.
 - `POST /auth/refresh`: force session refresh.
 - `POST /auth/import-state`: import browser storage state or cookie list.
+- `POST /auth/qr/start`: create QR login session and return QR payloads (`qr_ascii`, `qr_png_path`, `qr_image_base64`).
+- `GET /auth/qr/status?login_session_id=...`: poll QR login state, drive CAS->JWXT SSO, and auto-persist `storage_state.json` on success.
+- `POST /auth/qr/confirm?login_session_id=...`: compatibility endpoint; returns the already-persisted QR login result and closes the runtime session.
 - `GET /auth/keepalive/status`: get keepalive worker status and counters.
 - `POST /auth/keepalive/start|stop|ping`: control keepalive worker.
 - `GET /timetable?term=current&week=11`: fetch normalized timetable for a term/week.
@@ -40,6 +45,18 @@ Local service and agent-facing tooling for reading data from the SYSU teaching a
   - `score`, `exam_year`, `half_year`, `subject`
   - section scores (`hearing_score`, `reading_score`, `writing_score`)
   - status flags (`missing_test`, `violation`)
+
+## QR Login Flow
+
+1. Call `POST /auth/qr/start`.
+2. Render returned `qr_ascii` or `qr_png_path` to user for Enterprise WeCom scan/confirm.
+3. Poll `GET /auth/qr/status`.
+4. When status becomes `success`, `storage_state.json` has already been persisted automatically.
+5. `POST /auth/qr/confirm` is optional and only used to close the in-memory QR session explicitly.
+
+Implementation note:
+
+- The working student flow must use `pattern=student-login` on the JWXT CAS SSO entry. Using the bare `/api/sso/cas/login` endpoint leaves the session stuck after CAS confirmation.
 
 ## Development
 
@@ -75,9 +92,24 @@ Useful options:
 .venv/bin/python scripts/session_validity_monitor.py --interval-seconds 60 --output data/monitor/session-validity.log
 ```
 
+QR login terminal helper (prints ASCII QR when available, then polls until `storage_state.json` is persisted):
+
+```bash
+.venv/bin/python scripts/qr_login_cli.py
+```
+
+Quick verification after QR login succeeds:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/auth/refresh
+curl -sS 'http://127.0.0.1:8000/grades?term=2025-1'
+curl -sS 'http://127.0.0.1:8000/timetable?term=2025-2&week=11'
+```
+
 ## Notes
 
 - Credentials are intentionally not persisted by default.
 - Session state is stored under `data/` and should be treated as sensitive.
 - Upstream selectors and API contracts are expected to change; parsing code fails loudly instead of silently returning empty data.
 - If upstream APIs return unexpected structures, prefer preserving `raw` payloads and updating parsers explicitly.
+- `/classrooms/empty` currently expects canonical campus names such as `东校园`; short aliases like `东校` are rejected by validation.

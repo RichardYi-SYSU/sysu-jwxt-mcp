@@ -12,9 +12,13 @@ from sysu_jwxt_agent.schemas import (
     ImportStateRequest,
     ImportStateResponse,
     KeepaliveStatus,
+    QrLoginConfirmResponse,
+    QrLoginStartResponse,
+    QrLoginStatusResponse,
     SessionStatus,
     TimetableResponse,
 )
+from sysu_jwxt_agent.services.auth import QrLoginNotReadyError, QrLoginSessionNotFoundError, QrLoginStartError
 from sysu_jwxt_agent.services.jwxt import (
     AuthenticationRequiredError,
     InvalidQueryError,
@@ -45,6 +49,41 @@ def build_router(jwxt_client: JwxtClient, auth_service, keepalive_service=None) 
     @router.post("/auth/import-state", response_model=ImportStateResponse)
     async def import_state(payload: ImportStateRequest) -> ImportStateResponse:
         return auth_service.import_state(payload)
+
+    @router.post("/auth/qr/start", response_model=QrLoginStartResponse)
+    def start_qr_login() -> QrLoginStartResponse:
+        try:
+            return auth_service.start_qr_login()
+        except QrLoginStartError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "qr_start_failed", "message": str(exc)},
+            ) from exc
+
+    @router.get("/auth/qr/status", response_model=QrLoginStatusResponse)
+    def qr_login_status(login_session_id: str = Query(min_length=8)) -> QrLoginStatusResponse:
+        try:
+            return auth_service.get_qr_login_status(login_session_id=login_session_id)
+        except QrLoginSessionNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "qr_session_not_found", "message": str(exc)},
+            ) from exc
+
+    @router.post("/auth/qr/confirm", response_model=QrLoginConfirmResponse)
+    def qr_login_confirm(login_session_id: str = Query(min_length=8)) -> QrLoginConfirmResponse:
+        try:
+            return auth_service.confirm_qr_login(login_session_id=login_session_id)
+        except QrLoginSessionNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "qr_session_not_found", "message": str(exc)},
+            ) from exc
+        except QrLoginNotReadyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "qr_login_not_ready", "message": str(exc)},
+            ) from exc
 
     @router.get("/auth/keepalive/status", response_model=KeepaliveStatus, response_model_exclude_none=True)
     async def keepalive_status() -> KeepaliveStatus:

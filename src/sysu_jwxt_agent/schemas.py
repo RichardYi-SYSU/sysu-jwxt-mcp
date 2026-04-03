@@ -53,6 +53,41 @@ class ImportStateResponse(BaseModel):
     message: str
 
 
+class QrLoginStartResponse(BaseModel):
+    login_session_id: str
+    status: Literal["pending", "scanned", "confirmed", "success", "expired", "failed"]
+    qr_image_base64: str | None = None
+    qr_ascii: str | None = None
+    qr_page_url: str | None = None
+    qr_png_path: str | None = None
+    expires_at: str | None = None
+    message: str
+
+
+class QrLoginStatusResponse(BaseModel):
+    login_session_id: str
+    status: Literal["pending", "scanned", "confirmed", "success", "expired", "failed"]
+    authenticated: bool
+    expires_at: str | None = None
+    last_error: str | None = None
+    state_persisted: bool = False
+    state_path: str | None = None
+    cookie_count: int = 0
+    qr_png_path: str | None = None
+    trace_path: str | None = None
+    message: str | None = None
+
+
+class QrLoginConfirmResponse(BaseModel):
+    login_session_id: str
+    status: Literal["success"]
+    authenticated: bool
+    imported: bool
+    cookie_count: int
+    state_path: str
+    message: str
+
+
 class TimetableEntry(BaseModel):
     term: str
     course_name: str
