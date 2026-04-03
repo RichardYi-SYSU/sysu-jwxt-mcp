@@ -24,13 +24,15 @@ uv run sysu-jwxt-mcp
 
 ## MCP Server Configuration
 
-统一使用下面这条本地启动命令：
+统一使用下面这条本地启动命令（避免 `bash -lc`；部分 IDE 会把 shell 启动噪音当成 MCP 启动失败）：
 
 ```bash
-bash -lc 'cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp'
+/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp
 ```
 
-将 `/path/to/sysu-jwxt-agent` 替换成你本地仓库的实际路径。
+将 `/path/to/sysu-jwxt-mcp` 替换成你本地仓库的实际路径。
+
+如果你更倾向于 `uv run`，请先完成依赖同步；否则 IDE 启动时 `uv` 可能会尝试联网解析依赖。
 
 ### Codex
 
@@ -38,8 +40,7 @@ bash -lc 'cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp'
 
 ```toml
 [mcp_servers.sysu-jwxt]
-command = "bash"
-args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+command = "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp"
 ```
 
 ### Claude Code
@@ -50,8 +51,7 @@ args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
 {
   "mcpServers": {
     "sysu-jwxt": {
-      "command": "bash",
-      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+      "command": "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp"
     }
   }
 }
@@ -65,8 +65,7 @@ args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
 {
   "mcpServers": {
     "sysu-jwxt": {
-      "command": "bash",
-      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
+      "command": "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp"
     }
   }
 }
@@ -81,13 +80,50 @@ args = ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"]
   "mcpServers": {
     "sysu-jwxt": {
       "type": "stdio",
-      "command": "bash",
-      "args": ["-lc", "cd /path/to/sysu-jwxt-agent && uv run sysu-jwxt-mcp"],
+      "command": "/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp",
       "tools": ["*"]
     }
   }
 }
 ```
+
+### Tool 不可见排查
+
+如果 IDE 看不到 tools，请先确认：
+
+1. 在仓库根目录完成一次环境准备：
+
+   ```bash
+   uv sync
+   uv run playwright install chromium
+   ```
+
+2. 用 stdio 自检 MCP 的工具暴露：
+
+   ```bash
+   python - <<'PY'
+   import asyncio
+   from mcp.client.session import ClientSession
+   from mcp.client.stdio import stdio_client, StdioServerParameters
+
+   async def main():
+       server = StdioServerParameters(
+           command="/path/to/sysu-jwxt-mcp/.venv/bin/sysu-jwxt-mcp",
+       )
+       async with stdio_client(server) as (r, w):
+           async with ClientSession(r, w) as session:
+               await session.initialize()
+               tools = await session.list_tools()
+               print([tool.name for tool in tools.tools])
+
+   asyncio.run(main())
+   PY
+   ```
+
+3. 仍失败时重点检查：
+   - `/path/to/...` 没替换成真实路径；
+   - 依赖未安装（重新执行 `uv sync`）；
+   - shell 包装器在 MCP 握手前向标准流输出内容。
 
 ## 首次使用
 
