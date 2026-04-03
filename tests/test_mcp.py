@@ -169,6 +169,7 @@ def test_mcp_lists_expected_tools() -> None:
 
     assert "auth_refresh" in names
     assert "auth_qr_start" in names
+    assert "auth_qr_terminal" in names
     assert "get_timetable" in names
     assert "get_grades" in names
     assert "get_empty_classrooms" in names
@@ -191,6 +192,19 @@ def test_mcp_auth_qr_start_can_include_base64() -> None:
     result = _structured_result(asyncio.run(server.call_tool("auth_qr_start", {"include_base64": True})))
 
     assert result["qr_image_base64"] == "ZmFrZQ=="
+
+
+def test_mcp_auth_qr_terminal_returns_plain_text_view() -> None:
+    server = _build_stub_server()
+
+    content, result = asyncio.run(server.call_tool("auth_qr_terminal", {}))
+
+    assert len(content) == 1
+    assert "login_session_id: abc12345" in content[0].text
+    assert "status: pending" in content[0].text
+    assert "qr_png_path: data/state/qr-login/abc12345.png" in content[0].text
+    assert "\nQR\n" in content[0].text
+    assert result["result"] == content[0].text
 
 
 def test_mcp_get_grades_returns_structured_payload() -> None:

@@ -49,6 +49,7 @@
 - tool 能力与当前鉴权/查询能力保持一致：
   - `auth_refresh`
   - `auth_qr_start|status|confirm`
+  - `auth_qr_terminal`
   - `auth_keepalive_status|start|stop|ping`
   - `get_timetable`
   - `get_exams`
@@ -124,6 +125,17 @@ MCP 服务启动方式：
 ```bash
 sysu-jwxt-mcp
 ```
+
+对于 Codex CLI 这类终端型 MCP 客户端，优先使用纯文本二维码工具：
+
+```text
+调用 auth_qr_terminal
+```
+
+实现说明：
+
+- `auth_qr_terminal` 会返回一整段纯文本，其中包含 `login_session_id`、`qr_png_path` 和 ASCII 二维码。
+- MCP tools 会把阻塞型 service 调用派发到工作线程，避免在 MCP 的 asyncio 事件循环里直接运行同步版 Playwright。
 
 扫码成功后的快速验证命令：
 

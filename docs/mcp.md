@@ -15,6 +15,7 @@ The MCP layer does not self-call the REST API. It reuses `AuthService`, `JwxtCli
 
 - `auth_refresh`
 - `auth_qr_start`
+- `auth_qr_terminal`
 - `auth_qr_status`
 - `auth_qr_confirm`
 - `auth_keepalive_status`
@@ -42,8 +43,8 @@ python -m sysu_jwxt_agent.mcp_server
 
 ## Recommended Login Flow
 
-1. Call `auth_qr_start`
-2. Render `qr_ascii` or show `qr_png_path`
+1. In CLI-oriented clients such as Codex CLI, call `auth_qr_terminal`
+2. In structured clients, call `auth_qr_start` and render `qr_ascii` or show `qr_png_path`
 3. Poll `auth_qr_status`
 4. When `status=success`, `data/state/storage_state.json` is already persisted
 5. Then call query tools such as `get_grades` or `get_timetable`
@@ -52,6 +53,8 @@ Important:
 
 - The verified student QR flow depends on `pattern=student-login` in the JWXT CAS entry.
 - `auth_qr_start` hides `qr_image_base64` by default to keep stdio output compact.
+- `auth_qr_terminal` returns a single plain-text block so terminal MCP clients can display the QR directly.
+- MCP query tools run their blocking service calls in worker threads so `playwright.sync_api` does not execute inside the MCP event loop.
 - `get_empty_classrooms` expects canonical campus names such as `东校园`.
 
 ## Client Notes

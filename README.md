@@ -49,6 +49,7 @@ This repository now ships both:
 - Tool surface mirrors the existing auth and query capabilities:
   - `auth_refresh`
   - `auth_qr_start|status|confirm`
+  - `auth_qr_terminal`
   - `auth_keepalive_status|start|stop|ping`
   - `get_timetable`
   - `get_exams`
@@ -124,6 +125,17 @@ MCP server:
 ```bash
 sysu-jwxt-mcp
 ```
+
+For Codex CLI and other terminal MCP clients, prefer the plain-text QR tool:
+
+```text
+call auth_qr_terminal
+```
+
+Implementation notes:
+
+- `auth_qr_terminal` returns a single text block that includes `login_session_id`, `qr_png_path`, and ASCII QR content.
+- MCP tools dispatch blocking service calls onto worker threads so the synchronous Playwright client does not run inside the MCP asyncio loop.
 
 Quick verification after QR login succeeds:
 
