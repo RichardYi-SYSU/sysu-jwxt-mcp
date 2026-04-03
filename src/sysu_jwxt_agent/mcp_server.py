@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from base64 import b64decode
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
+from mcp.types import CallToolResult, TextContent
 
 from sysu_jwxt_agent.bootstrap import AppServices, create_services
 from sysu_jwxt_agent.config import settings
@@ -65,9 +67,25 @@ def build_mcp_server(services: AppServices | None = None) -> FastMCP:
             payload = _dump_model(await asyncio.to_thread(auth_service.start_qr_login))
         except QrLoginStartError as exc:
             raise _tool_error("qr_start_failed", str(exc)) from exc
+        content = [
+            TextContent(
+                type="text",
+                text=(
+                    "Scan the QR code and poll auth_qr_status with "
+                    f"login_session_id={payload['login_session_id']} until status=success."
+                ),
+            ),
+        ]
+        if payload.get("qr_image_base64"):
+            content.append(Image(data=b64decode(payload["qr_image_base64"]), format="png").to_image_content())
+        elif payload.get("qr_png_path"):
+            content.append(Image(path=payload["qr_png_path"]).to_image_content())
         if not include_base64:
             payload.pop("qr_image_base64", None)
-        return payload
+        return CallToolResult(
+            content=content,
+            structuredContent=payload,
+        )
 
     @mcp.tool(
         name="auth_qr_terminal",

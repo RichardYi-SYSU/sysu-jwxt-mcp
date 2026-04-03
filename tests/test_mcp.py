@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from mcp.types import CallToolResult
 
 from sysu_jwxt_agent.bootstrap import AppServices
 from sysu_jwxt_agent.mcp_server import build_mcp_server
@@ -156,6 +157,8 @@ def _build_stub_server(authenticated: bool = True):
 
 
 def _structured_result(result):
+    if isinstance(result, CallToolResult):
+        return result.structuredContent
     assert isinstance(result, tuple)
     assert len(result) == 2
     return result[1]
@@ -179,11 +182,16 @@ def test_mcp_lists_expected_tools() -> None:
 def test_mcp_auth_qr_start_hides_base64_by_default() -> None:
     server = _build_stub_server()
 
-    result = _structured_result(asyncio.run(server.call_tool("auth_qr_start", {})))
+    result = asyncio.run(server.call_tool("auth_qr_start", {}))
+    structured = _structured_result(result)
 
-    assert result["login_session_id"] == "abc12345"
-    assert "qr_image_base64" not in result
-    assert result["qr_ascii"] == "QR"
+    assert structured["login_session_id"] == "abc12345"
+    assert "qr_image_base64" not in structured
+    assert structured["qr_ascii"] == "QR"
+    assert isinstance(result, CallToolResult)
+    assert len(result.content) == 2
+    assert result.content[0].type == "text"
+    assert result.content[1].type == "image"
 
 
 def test_mcp_auth_qr_start_can_include_base64() -> None:
